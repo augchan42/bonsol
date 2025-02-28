@@ -17,3 +17,6 @@ stark
 MyLogFile.log
 .pnpm-store
 
+
+# Private individual user cursor rules
+.cursor/rules/_*.mdc

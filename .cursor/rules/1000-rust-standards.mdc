@@ -1,0 +1,64 @@
+---
+description: ENFORCE Rust code standards WHEN writing or modifying Rust code TO maintain consistency and safety
+globs: **/*.rs
+---
+
+# Rust Code Standards
+
+## Context
+- Applied when writing or modifying Rust code in the Bonsol project
+- Focuses on safety, performance, and maintainability
+
+## Requirements
+- Use Rust 2021 edition
+- Follow workspace-wide lints defined in Cargo.toml
+- Deny the following clippy lints:
+  - clone_on_ref_ptr
+  - missing_const_for_fn
+  - trivially_copy_pass_by_ref
+- Use explicit error types with thiserror
+- Implement proper error handling using anyhow for application code
+- Use flatbuffers 24.3.25 for serialization
+- Properly document public APIs with rustdoc
+- Use async/await with tokio for async operations
+- Follow RISC0 zkVM patterns for zero-knowledge proofs
+- Use solana-sdk ~2.0 for Solana interactions
+
+## Examples
+
+<example>
+// Good error handling
+#[derive(Debug, thiserror::Error)]
+pub enum BonsolError {
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+    #[error("Execution failed: {0}")]
+    ExecutionFailed(#[from] anyhow::Error),
+}
+
+async fn process_input(input: &[u8]) -> Result<(), BonsolError> {
+    // Implementation
+}
+</example>
+
+<example type="invalid">
+// Bad: Using String for errors
+fn process_input(input: &[u8]) -> Result<(), String> {
+    // Implementation
+}
+</example>
+
+<example>
+// Good: Proper async/await usage
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    // Implementation
+}
+</example>
+
+<example type="invalid">
+// Bad: Blocking operations in async context
+async fn process() {
+    std::thread::sleep(std::time::Duration::from_secs(1));
+}
+</example> 

@@ -1,0 +1,76 @@
+---
+description: ENFORCE TypeScript schema standards WHEN working with schema files TO maintain type safety and consistency
+globs: schemas-ts/**/*.ts
+---
+
+# TypeScript Schema Standards
+
+## Context
+- Applied when working with TypeScript schema files in schemas-ts directory
+- Ensures type safety and consistency across schema definitions
+- Maintains compatibility with Rust flatbuffers schemas
+
+## Requirements
+- Use strict TypeScript configuration
+- Define explicit types for all schema interfaces and enums
+- Use proper naming conventions:
+  - PascalCase for type names and interfaces
+  - camelCase for properties and methods
+  - UPPER_SNAKE_CASE for enum values
+- Include JSDoc comments for all public types and interfaces
+- Maintain compatibility with flatbuffers 24.3.25
+- Export all schema types from index.ts
+- Use readonly properties where appropriate
+- Avoid any type unless absolutely necessary
+- Use union types instead of enums for string literals
+
+## Examples
+
+<example>
+// Good schema definition
+/**
+ * Represents an execution request with its parameters
+ */
+export interface ExecutionRequest {
+  readonly programId: string;
+  readonly input: ExecutionInput;
+  readonly status: ExecutionStatus;
+}
+
+export type ExecutionStatus = 
+  | 'PENDING'
+  | 'PROCESSING'
+  | 'COMPLETED'
+  | 'FAILED';
+</example>
+
+<example type="invalid">
+// Bad: Implicit any and missing readonly
+interface ExecutionRequest {
+  programId;  // implicit any
+  input: any;  // explicit any
+  status: string;  // too broad
+}
+</example>
+
+<example>
+// Good: Using union types for status
+export type InputType = 
+  | 'PROGRAM_INPUT'
+  | 'CHANNEL_INPUT'
+  | 'EXECUTION_INPUT';
+
+export interface Input {
+  readonly type: InputType;
+  readonly data: Uint8Array;
+}
+</example>
+
+<example type="invalid">
+// Bad: Using enum instead of union type
+enum InputType {
+  PROGRAM_INPUT,
+  CHANNEL_INPUT,
+  EXECUTION_INPUT
+}
+</example> 
