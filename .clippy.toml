@@ -1,0 +1,21 @@
+# Clippy configuration for Bonsol Project
+
+# Type Safety
+type-complexity-threshold = 250
+too-many-arguments-threshold = 7
+enum-variant-size-threshold = 200
+
+# Performance
+vec-box-size-threshold = 0
+trivial-copy-size-threshold = 50
+
+# Style
+doc-valid-idents = ["RPC", "API", "JSON", "RISC0"]
+cognitive-complexity-threshold = 25
+
+# Custom configurations
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+
+# Solana-specific settings
+large-enum-variant-threshold = 100  # Smaller threshold for Solana programs to encourage Box usage 

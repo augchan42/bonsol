@@ -1,1 +1,39 @@
+# Rustfmt configuration for Bonsol Project
+
+# Basic formatting
+max_width = 100
+tab_spaces = 4
+edition = "2021"
+newline_style = "Unix"
+
+# Imports
+imports_granularity = "Module"
+group_imports = "StdExternalCrate"
+reorder_imports = true
+
+# Comments and Documentation
+format_code_in_doc_comments = true
+wrap_comments = true
+comment_width = 100
+
+# Structural elements
+struct_field_align_threshold = 20
+enum_discrim_align_threshold = 20
+where_single_line = true
+brace_style = "SameLineWhere"
+
+# Function formatting
+fn_args_layout = "Tall"
+fn_single_line = false
+use_small_heuristics = "Max"
+
+# Control flow
+control_brace_style = "AlwaysSameLine"
+match_arm_leading_pipes = "Never"
+match_block_trailing_comma = true
+
+# Chains
+chain_width = 60
+use_try_shorthand = true
+
 ignore = ["**/*_generated.rs"]
