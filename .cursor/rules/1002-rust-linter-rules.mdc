@@ -1,0 +1,106 @@
+---
+description: 
+globs: 
+---
+// Rust Linter Rules for Bonsol Project
+// These rules are derived from analyzing the existing codebase patterns and Rust best practices
+
+// NAMING CONVENTIONS
+#[deny(non_snake_case)]
+// Enforce snake_case for functions and variables
+#[deny(non_camel_case_types)]
+// Enforce CamelCase for types, traits, and enums
+
+// DOCUMENTATION
+#[deny(missing_docs)]
+// Require documentation for public items
+#[deny(missing_debug_implementations)]
+// Require Debug implementations for public types
+
+// CODE ORGANIZATION
+#[deny(dead_code)]
+// Prevent unused code
+#[deny(unused_imports)]
+// Prevent unused imports
+#[deny(unused_variables)]
+// Prevent unused variables
+#[deny(unreachable_code)]
+// Prevent unreachable code
+
+// ERROR HANDLING
+#[deny(unused_must_use)]
+// Enforce handling of Result and Option types
+#[deny(clippy::unwrap_used)]
+// Discourage use of unwrap() in production code
+#[deny(clippy::expect_used)]
+// Discourage use of expect() in production code
+
+// ASYNC/AWAIT
+#[warn(clippy::await_holding_lock)]
+// Warn about holding a lock during an await
+#[deny(clippy::await_holding_refcell_ref)]
+// Prevent holding a RefCell ref during an await
+
+// TYPE SAFETY
+#[deny(clippy::cast_possible_truncation)]
+// Prevent unsafe numeric casts that might truncate
+#[deny(clippy::cast_sign_loss)]
+// Prevent casts that might lose sign information
+#[deny(clippy::cast_precision_loss)]
+// Prevent floating-point casts that might lose precision
+
+// PERFORMANCE
+#[warn(clippy::needless_collect)]
+// Warn about unnecessary collection allocations
+#[warn(clippy::redundant_clone)]
+// Warn about unnecessary clones
+#[warn(clippy::unnecessary_to_owned)]
+// Warn about unnecessary conversions to owned types
+
+// SOLANA-SPECIFIC
+#[deny(clippy::too_many_arguments)]
+// Limit function arguments (important for Solana instruction handlers)
+#[warn(clippy::large_enum_variant)]
+// Warn about large enum variants that might be better as Box<T>
+
+// CUSTOM RULES
+#[deny(clippy::missing_safety_doc)]
+// Require safety documentation for unsafe functions
+#[deny(clippy::mod_module_files)]
+// Enforce consistent module file organization
+
+// FORMATTING
+#[deny(clippy::inconsistent_struct_constructor)]
+// Enforce consistent struct initialization style
+#[deny(clippy::wildcard_imports)]
+// Prevent use of wildcard imports except in tests
+
+// TESTING
+#[cfg_attr(test, allow(clippy::unwrap_used))]
+// Allow unwrap() in tests
+#[cfg_attr(test, allow(clippy::expect_used))]
+// Allow expect() in tests
+
+// DOCUMENTATION EXAMPLES
+/*
+Good:
+```rust
+#[derive(Debug)]
+pub struct BonsolInstruction {
+    pub cpi: bool,
+    pub accounts: Vec<Pubkey>,
+    pub data: Vec<u8>,
+    pub last_known_block: u64,
+}
+```
+
+Bad:
+```rust
+struct bonsolInstruction {  // Wrong: Not CamelCase
+    Cpi: bool,             // Wrong: Not snake_case
+    Accounts: Vec<Pubkey>, // Wrong: Not snake_case
+    Data: Vec<u8>,        // Wrong: Not snake_case
+    LastKnownBlock: u64,  // Wrong: Not snake_case
+}
+```
+*/ 

@@ -2,10 +2,18 @@
 allow-git = ["https://github.com/anagrambuild/risc0"]
 
 [bans]
-multiple-versions = 'allow'
+multiple-versions = 'deny'
+deny = [
+  # security concerns
+  { name = "openssl" },  # prefer rustls
+  # unmaintained
+  { name = "tempdir" },  # use tempfile instead
+]
+workspace-default-features = "allow"
 
 [licenses]
-private = { ignore = true }
+# Blanket approval or denial of licenses
+unlicensed = "deny"
 allow = [
   "0BSD",
   "Apache-2.0",
@@ -20,6 +28,13 @@ allow = [
   "OpenSSL",
   "Unicode-DFS-2016",
 ]
+deny = [
+  "AGPL-1.0",
+  "AGPL-3.0",
+]
+copyleft = "warn"
+allow-osi-fsf-free = "either"
+confidence-threshold = 0.8
 
 # Copied from https://github.com/EmbarkStudios/cargo-deny/blob/6344cc566621410a0865632b4ef0e82a20408676/deny.toml#L63
 [[licenses.clarify]]
@@ -131,3 +146,16 @@ ignore = [
     Solution: No safe upgrade is available!
   """ },
 ]
+
+[sources]
+# Only allow dependencies from crates.io
+unknown-registry = "deny"
+unknown-git = "deny"
+
+[advisories]
+db-path = "~/.cargo/advisory-db"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+vulnerability = "deny"
+unmaintained = "warn"
+yanked = "warn"
+notice = "warn"
