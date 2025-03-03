@@ -20,3 +20,4 @@ MyLogFile.log
 
 # Private individual user cursor rules
 .cursor/rules/_*.mdc
+.cursor/local_rules
