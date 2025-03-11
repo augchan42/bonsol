@@ -36,6 +36,18 @@ pub fn verify_risc0_v1_2_1(proof: &[u8], inputs: &[u8]) -> Result<bool, ChannelE
         hex::encode(&inputs[..32.min(inputs.len())])
     );
 
+    // Check if we're in dev mode
+    if option_env!("RISC0_DEV_MODE").is_some() {
+        msg!("Dev mode: Skipping cryptographic verification");
+        // In dev mode, we accept any proof that has the right size
+        if proof.len() == 32 {
+            msg!("Dev mode: Mock proof accepted");
+            return Ok(true);
+        }
+        msg!("Dev mode: Invalid mock proof size");
+        return Ok(false);
+    }
+
     let ins: [[u8; 32]; 5] = [
         sized_range::<32>(&inputs[0..32])?,
         sized_range::<32>(&inputs[32..64])?,
