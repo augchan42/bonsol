@@ -729,6 +729,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bitoracle-iching-callback"
+version = "0.1.0"
+dependencies = [
+ "bonsol-interface",
+ "borsh 0.10.4",
+ "solana-program 2.0.23",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "bitvec"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

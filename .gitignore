@@ -30,3 +30,4 @@ elf/
 .cursor/rules/_*.mdc
 
 verification_key.json
+program-keypair.json

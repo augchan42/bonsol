@@ -1,0 +1,18 @@
+[package]
+name = "bitoracle-iching-callback"
+version = "0.1.0"
+edition = "2021"
+description = "Callback program for storing 8BitOracle I Ching hexagram results on-chain"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[features]
+no-entrypoint = []
+test-sbf = []
+
+[dependencies]
+solana-program = { workspace = true }
+bonsol-interface = { version = "0.4.5", path = "../../onchain/interface", features = ["on-chain"], default-features = false }
+thiserror = "1.0"
+borsh = "0.10" 

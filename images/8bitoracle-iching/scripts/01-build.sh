@@ -83,6 +83,14 @@ if [ "$REBUILD_BONSOL" = true ]; then
             cargo build-sbf --verbose
         cd ../..
 
+        # Build the 8BitOracle I Ching callback program
+        echo "Debug: Building 8BitOracle I Ching callback program..."
+        cd onchain/8bitoracle-iching-callback
+        RUST_LOG="debug,solana_program::log=debug" \
+            RUST_BACKTRACE=1 \
+            cargo build-sbf --verbose
+        cd ../..
+
         echo "Debug: Building rest of bonsol with dev mode..."
         RUST_LOG="debug,bonsol=debug,risc0_runner=debug,solana_program::log=debug" \
             RUST_BACKTRACE=1 \
@@ -93,6 +101,12 @@ if [ "$REBUILD_BONSOL" = true ]; then
     fi
     echo "Bonsol rebuild complete"
     echo
+
+    # Build the 8BitOracle I Ching callback program
+    echo "Building 8BitOracle I Ching callback program..."
+    cd onchain/8bitoracle-iching-callback
+    cargo build-sbf
+    cd ../..
 fi
 
 echo "Step 1: Building Rust program..."

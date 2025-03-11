@@ -1,0 +1,14 @@
+{
+  "name": "8bitoracle-iching-scripts",
+  "version": "1.0.0",
+  "description": "Helper scripts for 8BitOracle I Ching callback program",
+  "private": true,
+  "scripts": {
+    "derive-pda": "ts-node derive-pda.ts"
+  },
+  "dependencies": {
+    "@solana/web3.js": "^1.87.6",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}

@@ -7,6 +7,7 @@ members = [
   "onchain/bonsol",
   "onchain/interface",
   "onchain/example-program-on-bonsol",
+  "onchain/8bitoracle-iching-callback",
   "node",
   "schemas",
   "cli",
