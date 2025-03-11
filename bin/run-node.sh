@@ -69,32 +69,32 @@ print_usage() {
 }
 
 while getopts "F:LdDh" opt; do
-  case $opt in
+    case $opt in
     F)
-      if [ "$OPTARG" = "cuda" ]; then
-        USE_CUDA=true
-      else
-        echo "Error: Unknown feature flag: $OPTARG"
-        print_usage
-      fi
-      ;;
+        if [ "$OPTARG" = "cuda" ]; then
+            USE_CUDA=true
+        else
+            echo "Error: Unknown feature flag: $OPTARG"
+            print_usage
+        fi
+        ;;
     L)
-      USE_LOCAL_BUILD=true
-      ;;
+        USE_LOCAL_BUILD=true
+        ;;
     d)
-      DEBUG_MODE=true
-      ;;
+        DEBUG_MODE=true
+        ;;
     D)
-      DEV_MODE=true
-      ;;
+        DEV_MODE=true
+        ;;
     h)
-      print_usage
-      ;;
+        print_usage
+        ;;
     \?)
-      echo "Invalid option: -$OPTARG"
-      print_usage
-      ;;
-  esac
+        echo "Invalid option: -$OPTARG"
+        print_usage
+        ;;
+    esac
 done
 
 # Create keypair if it doesn't exist
@@ -113,11 +113,11 @@ solana -u http://localhost:8899 airdrop 1
 # Set stack size limit
 ulimit -s unlimited
 # Increase memory limits
-ulimit -v unlimited  # Virtual memory
-ulimit -m unlimited  # Max memory size
+ulimit -v unlimited # Virtual memory
+ulimit -m unlimited # Max memory size
 
 # Enable and configure core dumps
-ulimit -c unlimited  # Enable core dumps
+ulimit -c unlimited # Enable core dumps
 echo "Setting up core dump configuration..."
 
 # Ensure /tmp/cores exists with correct permissions
@@ -130,14 +130,14 @@ if [ -f /proc/sys/kernel/core_pattern ]; then
     # Save current pattern
     OLD_PATTERN=$(cat /proc/sys/kernel/core_pattern)
     echo "Previous core pattern: $OLD_PATTERN"
-    
+
     # Set new pattern
     echo "/tmp/cores/core-%e-%p-%t" | sudo tee /proc/sys/kernel/core_pattern
-    
+
     # Verify the pattern was set correctly
     NEW_PATTERN=$(cat /proc/sys/kernel/core_pattern)
     echo "New core pattern: $NEW_PATTERN"
-    
+
     # Additional WSL-specific configuration
     if grep -qi microsoft /proc/version; then
         echo "WSL detected - applying additional core dump settings..."
@@ -174,25 +174,33 @@ echo ""
 if [ "$DEBUG_MODE" = true ]; then
     # Enable full backtrace for debugging
     export RUST_BACKTRACE=1
-    
+
     # Enhanced logging configuration with trace levels for RISC0 and proof verification
     export RUST_LOG="bonsol_node=debug,\
 bonsol_node::risc0_runner=debug,\
 bonsol_prover=debug,\
 bonsol_prover::input_resolver=trace,\
 stark_to_snark=trace,\
-sol_prover::input_resolver=trace"
+sol_prover::input_resolver=trace,\
+solana_runtime::message_processor=debug,\
+solana_runtime::transaction_processor=debug,\
+solana_program_runtime=debug,\
+solana_program::log=debug"
 
     echo ""
     echo "============================================"
     echo "🔍 DEBUG MODE ENABLED"
     echo "Log levels:"
     echo "  - bonsol_node = debug"
-    echo "  - bonsol_node::risc0_runner = trace"
+    echo "  - bonsol_node::risc0_runner = debug"
     echo "  - bonsol_prover = debug"
     echo "  - bonsol_prover::input_resolver = trace"
     echo "  - stark_to_snark = trace"
     echo "  - sol_prover::input_resolver = trace"
+    echo "  - solana_runtime::message_processor = debug"
+    echo "  - solana_runtime::transaction_processor = debug"
+    echo "  - solana_program_runtime = debug"
+    echo "  - solana_program::log = debug"
     echo "============================================"
     echo ""
 
@@ -203,7 +211,7 @@ sol_prover::input_resolver=trace"
     else
         echo "RISC0 Development Mode: Disabled (SECURE PROOFS)"
     fi
-    
+
     # Check if RISC0_INFO is set for profiling
     if [ -n "$RISC0_INFO" ]; then
         echo "RISC0 Profiling: Enabled"
@@ -216,7 +224,7 @@ sol_prover::input_resolver=trace"
     echo "  Dev mode enabled: $DEV_MODE"
     echo "  Log level: RUST_LOG=$RUST_LOG"
     echo ""
-    
+
     if [ "$USE_LOCAL_BUILD" = true ]; then
         # Point to debug build path
         BINARY_PATH="target/debug/bonsol-node"
@@ -246,7 +254,7 @@ run_node() {
     # Ensure core dumps are enabled for this process and its children
     ulimit -S -c unlimited
     ulimit -H -c unlimited
-    
+
     echo "Starting node process with core dumps enabled"
     echo "Current process: $$"
     echo "Core dump settings:"
@@ -254,7 +262,7 @@ run_node() {
     echo "  Core pattern: $(cat /proc/sys/kernel/core_pattern)"
     echo "  Process limits:"
     ulimit -a
-    
+
     # Run the actual command with core dump settings and process tracking
     # Preserve the environment variables by using env
     env RUST_LOG="$RUST_LOG" RUST_BACKTRACE="$RUST_BACKTRACE" RISC0_DEV_MODE="$RISC0_DEV_MODE" bash -c '

@@ -1,32 +1,45 @@
+# Bonsol Solana Program Package Configuration
 [package]
-name = "bonsol"
-version.workspace = true
+name = "bonsol"                # The on-chain Solana program name
+version.workspace = true       # Version is managed in workspace root
 description = "Solana channel to Bonsol"
 authors = ["anagram build team"]
 repository = "https://github.com/bonsolcollective/bonsol"
 license = "MIT"
-edition = "2021"
+edition = "2021"              # Using Rust 2021 edition
 
+# Documentation settings
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
+# Library configuration
 [lib]
+# Build both a Solana program (cdylib) and a library other crates can use
 crate-type = ["cdylib", "lib"]
 
+# Optional features
 [features]
-no-entrypoint = []
-test-sbf = []
+no-entrypoint = []    # Disable Solana entrypoint when used as a library
+test-sbf = []         # Enable Solana program testing
 
+# Dependencies
 [dependencies]
-ark-bn254 = "0.4.0"
-ark-serialize = "0.4.0"
-bonsol-interface = { version="0.4.5", path="../interface", features = [
-  "on-chain",
-], default-features = false }
-flatbuffers = "24.3.25"
-groth16-solana = "0.0.2"
-hex = "0.4.2"
-hex-literal = "0.4.1"
-num-bigint = "0.4.4"
-solana-program.workspace = true
-thiserror = "1.0.57"
+# Cryptographic libraries for proof verification
+ark-bn254 = "0.4.0"          # BN254 elliptic curve implementation
+ark-serialize = "0.4.0"      # Serialization for ark-bn254
+
+# Bonsol specific dependencies
+bonsol-interface = { version = "0.4.5", path = "../interface", features = ["on-chain"], default-features = false }
+
+# Serialization and encoding
+flatbuffers = "24.3.25"      # Efficient serialization library
+groth16-solana = "0.0.2"     # Groth16 ZK proof verification for Solana
+hex = "0.4.2"                # Hex encoding/decoding utilities
+hex-literal = "0.4.1"        # Convenient hex literal syntax
+num-bigint = "0.4.4"         # Big number arithmetic for cryptography
+
+# Solana dependencies
+solana-program.workspace = true  # Core Solana program SDK (version from workspace)
+
+# Error handling
+thiserror = "1.0.57"         # Derive Error traits

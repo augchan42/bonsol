@@ -11,7 +11,7 @@ input_order = ["Private"]  # Random seed is private input
 
 [dependencies]
 risc0-zkvm = { git = "https://github.com/anagrambuild/risc0", branch = "v1.0.1-bonsai-fix", default-features = false, features = [
-  "std",
+  "std"
 ] }
 dotenv = "0.15.0"
 anyhow = "1.0"

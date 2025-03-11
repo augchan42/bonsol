@@ -8,9 +8,18 @@ USE_LOCAL=false
 DEBUG=false
 while [[ "$#" -gt 0 ]]; do
     case $1 in
-        --local) USE_LOCAL=true; shift ;;
-        --debug) DEBUG=true; shift ;;
-        *) echo "Unknown parameter: $1"; exit 1 ;;
+    --local)
+        USE_LOCAL=true
+        shift
+        ;;
+    --debug)
+        DEBUG=true
+        shift
+        ;;
+    *)
+        echo "Unknown parameter: $1"
+        exit 1
+        ;;
     esac
 done
 
@@ -18,7 +27,7 @@ done
 ENV_FILE="$(dirname "$0")/../.env"
 if [ -f "$ENV_FILE" ]; then
     echo "Loading environment variables from $ENV_FILE"
-    set -a  # automatically export all variables
+    set -a # automatically export all variables
     source "$ENV_FILE"
     set +a
 else
@@ -28,8 +37,16 @@ fi
 # Enable debug logging if --debug flag is passed
 if [ "$DEBUG" = true ]; then
     echo "Debug mode enabled"
-    export RUST_LOG="info,bonsol=debug,object_store=debug"
+    export RUST_LOG="info,bonsol=debug,object_store=debug,solana_program::log=debug,bonsol_prover::input_resolver=debug,risc0_runner=debug"
     export RUST_BACKTRACE=1
+    export RISC0_DEV_MODE=1
+    echo "Debug logging enabled for:"
+    echo "  - Solana program logs"
+    echo "  - RISC0 runner"
+    echo "  - Bonsol prover"
+    echo "  - Object store"
+else
+    unset RISC0_DEV_MODE
 fi
 
 # Validate required environment variables
@@ -51,7 +68,7 @@ if [ -n "$S3_ENDPOINT" ]; then
     S3_ENDPOINT_CLEAN=${S3_ENDPOINT_CLEAN%/}
     # Add https:// back
     S3_ENDPOINT_FULL="https://$S3_ENDPOINT_CLEAN"
-    
+
     if [ "$DEBUG" = true ]; then
         echo "Debug: S3 Configuration:"
         echo "  Original endpoint: $S3_ENDPOINT"
@@ -160,4 +177,16 @@ if [ "$#" -eq 0 ]; then
     echo
     echo "Note: You can use --local to run with a local bonsol build from target/debug/"
     echo "      You can use --debug to enable detailed logging"
-fi 
+fi
+
+# Build the program
+if [ "$USE_LOCAL" = true ]; then
+    echo "Using local bonsol build: $BONSOL_CMD"
+    echo "Debug: Bonsol binary details:"
+    ls -l "$BONSOL_CMD"
+    echo "Debug: Bonsol binary last modified:"
+    stat "$BONSOL_CMD"
+else
+    echo "Building bonsol from source"
+    cargo build
+fi

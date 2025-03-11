@@ -81,7 +81,28 @@ pub fn process_status_v1<'a>(
     let er_ref = sa.exec.try_borrow_data()?;
     let er =
         root_as_execution_request_v1(&er_ref).map_err(|_| ChannelError::InvalidExecutionAccount)?;
-    let pr_v = st.proof().filter(|x| x.len() == 256);
+    
+    // Allow both 32-byte and 256-byte proofs in dev mode
+    let pr_v = if option_env!("RISC0_DEV_MODE").is_some() {
+        st.proof().filter(|x| x.len() == 32 || x.len() == 256)
+    } else {
+        st.proof().filter(|x| x.len() == 256)
+    };
+    
+    // Add detailed logging about the proof
+    if let Some(proof) = st.proof() {
+        msg!(
+            "Received proof with length: {}. Required length: 256. Execution ID: {}",
+            proof.len(),
+            sa.eid
+        );
+    } else {
+        msg!(
+            "No proof provided in status update for execution ID: {}",
+            sa.eid
+        );
+    }
+
     if er.max_block_height() < Clock::get()?.slot {
         return Err(ChannelError::ExecutionExpired.into());
     }
@@ -89,6 +110,15 @@ pub fn process_status_v1<'a>(
     let input_digest_v = st.input_digest().map(|x| x.bytes());
     let assumption_digest_v = st.assumption_digest().map(|x| x.bytes());
     let committed_outputs_v = st.committed_outputs().map(|x| x.bytes());
+
+    // Add detailed diagnostic logging
+    msg!("Checking proof components for execution ID: {}", sa.eid);
+    msg!("  - Proof present: {} (len: {})", pr_v.is_some(), pr_v.map_or(0, |p| p.len()));
+    msg!("  - Execution digest present: {}", execution_digest_v.is_some());
+    msg!("  - Assumption digest present: {}", assumption_digest_v.is_some());
+    msg!("  - Input digest present: {}", input_digest_v.is_some());
+    msg!("  - Committed outputs present: {}", committed_outputs_v.is_some());
+
     if let (Some(proof), Some(exed), Some(asud), Some(input_digest), Some(co)) = (
         pr_v,
         execution_digest_v,
@@ -96,15 +126,22 @@ pub fn process_status_v1<'a>(
         input_digest_v,
         committed_outputs_v,
     ) {
-        let proof: &[u8; 256] = proof
-            .bytes()
-            .try_into()
-            .map_err(|_| ChannelError::InvalidInstruction)?;
+        // Handle dev mode proofs differently
+        let proof_bytes = if option_env!("RISC0_DEV_MODE").is_some() && proof.len() == 32 {
+            // In dev mode with 32-byte proof, pad with zeros to match expected size
+            let mut padded = [0u8; 256];
+            padded[..32].copy_from_slice(proof.bytes());
+            padded
+        } else {
+            // Normal 256-byte proof
+            proof.bytes().try_into().map_err(|_| ChannelError::InvalidInstruction)?
+        };
+
         if er.verify_input_hash() {
             er.input_digest()
                 .map(|x| check_bytes_match(x.bytes(), input_digest, ChannelError::InputsDontMatch));
         }
-        let verified = verify_with_prover(input_digest, co, asud, er, exed, st, proof)?;
+        let verified = verify_with_prover(input_digest, co, asud, er, exed, st, &proof_bytes)?;
         let tip = er.tip();
 
         if verified {

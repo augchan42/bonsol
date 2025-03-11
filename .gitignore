@@ -17,7 +17,6 @@ stark
 MyLogFile.log
 .pnpm-store
 
-
 # Environment variables
 .env
 elf/
@@ -29,3 +28,5 @@ elf/
 
 # Private individual user cursor rules
 .cursor/rules/_*.mdc
+
+verification_key.json
