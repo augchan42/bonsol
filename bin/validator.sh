@@ -76,12 +76,12 @@ fi
 
 echo "Starting Solana test validator..."
 solana-test-validator \
-    --limit-ledger-size 100000000 \
+    --limit-ledger-size 0 \
     --bind-address 0.0.0.0 \
     --rpc-pubsub-enable-block-subscription \
     --log \
     --bpf-program BoNsHRcyLLNdtnoDf8hiCNZpyehMC4FDMxs6NTxFi3ew target/deploy/bonsol.so \
-    --bpf-program 2gPzr1AjyYT8JqAndyTDMDUsQsH8y3tc9CuKUtKA2Uv1 target/deploy/8bitoracle_iching_callback.so \
+    --bpf-program 2gPzr1AjyYT8JqAndyTDMDUsQsH8y3tc9CuKUtKA2Uv1 target/deploy/bitoracle_iching_callback.so \
     --bpf-program exay1T7QqsJPNcwzMiWubR6vZnqrgM16jZRraHgqBGG target/deploy/callback_example.so \
     "${extra_programs[@]}" \
     $reset_option

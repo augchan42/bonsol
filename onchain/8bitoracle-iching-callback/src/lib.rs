@@ -17,11 +17,10 @@ use {
 };
 
 // The expected image ID for our 8BitOracle I Ching program
-pub const BITORACLE_ICHING_IMAGE_ID: &str = "68f4b0c5f9ce034aa60ceb264a18d6c410a3af68fafd931bcfd9ebe7c1e42960";
+pub const BITORACLE_ICHING_IMAGE_ID: &str = "5a883ffc803d906106d4f6512a17dfd8279d8f03197e120b9f0ac54673b8544b";
 
-// Seeds for PDA derivation
-pub const HEXAGRAM_SEED_PREFIX: &[u8] = b"8bitoracle-hexagram";
-pub const HEXAGRAM_SEED_VERSION: &[u8] = b"v1";
+// Add version constant
+pub const CALLBACK_VERSION: &str = "v0.1.3"; // Increment this each time we deploy
 
 #[derive(Error, Debug)]
 pub enum CallbackError {
@@ -31,8 +30,6 @@ pub enum CallbackError {
     NotRentExempt,
     #[error("Invalid hexagram data")]
     InvalidHexagramData,
-    #[error("Invalid PDA")]
-    InvalidPDA,
     #[error("Invalid signer")]
     InvalidSigner,
     #[error("Invalid account owner")]
@@ -56,35 +53,6 @@ pub struct HexagramData {
     pub is_initialized: bool,    // To check if the account is initialized
 }
 
-/// Derives the hexagram storage PDA for a given execution account
-pub fn derive_hexagram_address(execution_account: &Pubkey, program_id: &Pubkey) -> (Pubkey, u8) {
-    Pubkey::find_program_address(
-        &[
-            HEXAGRAM_SEED_PREFIX,
-            HEXAGRAM_SEED_VERSION,
-            execution_account.as_ref(),
-        ],
-        program_id,
-    )
-}
-
-/// Process a single output from the callback data
-fn process_output(output: &[u8], lines: &mut [u8; 6]) -> Option<String> {
-    if output.starts_with(&[b'-', b'-', b'-']) {
-        // This is the ASCII art section
-        let ascii_art = String::from_utf8_lossy(output).to_string();
-        msg!("Found ASCII art output ({} bytes)", output.len());
-        Some(ascii_art)
-    } else if output.len() == 6 {
-        // This is the lines data section
-        lines.copy_from_slice(output);
-        msg!("Found lines data output: {:?}", output);
-        None
-    } else {
-        None
-    }
-}
-
 entrypoint!(process_instruction);
 
 pub fn process_instruction(
@@ -92,37 +60,98 @@ pub fn process_instruction(
     accounts: &[AccountInfo],
     instruction_data: &[u8],
 ) -> ProgramResult {
-    msg!("8BitOracle I Ching Callback - Processing instruction");
+    msg!("================================================================");
+    msg!("8BitOracle I Ching Callback {} - Starting instruction", CALLBACK_VERSION);
+    msg!("================================================================");
     
+    // Get accounts in order
     let accounts_iter = &mut accounts.iter();
     
-    // First account is the execution account (signer)
-    let execution_account = next_account_info(accounts_iter)?;
-    // Second account is where we'll store the hexagram data
-    let hexagram_account = next_account_info(accounts_iter)?;
-    // Get the system program account
-    let system_program = next_account_info(accounts_iter)?;
+    msg!("🔍 Validating account list...");
+    msg!("Expected accounts:");
+    msg!("1. Execution account (readonly signer)");
+    msg!("2. Hexagram storage account (writable)");
+    msg!("3. System program (readonly, executable)");
+    msg!("Actual accounts provided: {}", accounts.len());
     
-    // Verify account permissions and ownership
+    // First account is always the execution account (readonly signer)
+    let execution_account = next_account_info(accounts_iter)?;
+    msg!("\n📋 Execution Account Validation");
+    msg!("Expected:");
+    msg!("  - Key: Any valid pubkey");
+    msg!("  - Signer: true");
+    msg!("  - Writable: false");
+    msg!("  - Owner: Any valid program");
+    msg!("Actual:");
+    msg!("  - Key: {}", execution_account.key);
+    msg!("  - Signer: {}", execution_account.is_signer);
+    msg!("  - Writable: {}", execution_account.is_writable);
+    msg!("  - Owner: {}", execution_account.owner);
+    
     if !execution_account.is_signer {
-        msg!("Error: Execution account must be a signer");
+        msg!("❌ Validation failed: Execution account must be a signer");
         return Err(CallbackError::InvalidSigner.into());
     }
-
+    if execution_account.is_writable {
+        msg!("❌ Validation failed: Execution account must be readonly");
+        return Err(CallbackError::InvalidInstruction.into());
+    }
+    msg!("✓ Execution account validation passed");
+    
+    // Next get the hexagram storage account
+    let hexagram_account = next_account_info(accounts_iter)?;
+    msg!("\n📋 Hexagram Storage Account Validation");
+    msg!("Expected:");
+    msg!("  - Key: Any valid pubkey");
+    msg!("  - Signer: false");
+    msg!("  - Writable: true");
+    msg!("  - Owner: Either System Program (if new) or this program (if existing)");
+    msg!("Actual:");
+    msg!("  - Key: {}", hexagram_account.key);
+    msg!("  - Signer: {}", hexagram_account.is_signer);
+    msg!("  - Writable: {}", hexagram_account.is_writable);
+    msg!("  - Owner: {}", hexagram_account.owner);
+    msg!("  - Data length: {} bytes", hexagram_account.data_len());
+    msg!("  - Lamports: {}", hexagram_account.lamports());
+    
+    if !hexagram_account.is_writable {
+        msg!("❌ Validation failed: Hexagram account must be writable");
+        return Err(CallbackError::InvalidInstruction.into());
+    }
+    if hexagram_account.is_signer {
+        msg!("❌ Validation failed: Hexagram account must not be a signer");
+        return Err(CallbackError::InvalidSigner.into());
+    }
+    msg!("✓ Hexagram account validation passed");
+    
+    // Finally get the system program
+    let system_program = next_account_info(accounts_iter)?;
+    msg!("\n📋 System Program Validation");
+    msg!("Expected:");
+    msg!("  - Key: {}", SYSTEM_PROGRAM_ID);
+    msg!("  - Signer: false");
+    msg!("  - Writable: false");
+    msg!("  - Executable: true");
+    msg!("Actual:");
+    msg!("  - Key: {}", system_program.key);
+    msg!("  - Signer: {}", system_program.is_signer);
+    msg!("  - Writable: {}", system_program.is_writable);
+    msg!("  - Executable: {}", system_program.executable);
+    
     // Verify system program
-    if system_program.key != &SYSTEM_PROGRAM_ID {
-        msg!("Error: Invalid system program");
+    if !system_program.executable || system_program.key != &SYSTEM_PROGRAM_ID {
+        msg!("❌ Validation failed: Invalid system program");
+        msg!("  - Expected key: {}", SYSTEM_PROGRAM_ID);
+        msg!("  - Got key: {}", system_program.key);
+        msg!("  - Expected executable: true");
+        msg!("  - Got executable: {}", system_program.executable);
         return Err(CallbackError::InvalidSystemProgram.into());
     }
+    msg!("✓ System program validation passed");
 
-    // Verify the hexagram account PDA
-    let (expected_hexagram_address, bump_seed) = derive_hexagram_address(execution_account.key, program_id);
-    if expected_hexagram_address != *hexagram_account.key {
-        msg!("Error: Hexagram account does not match PDA derivation");
-        msg!("Expected: {}", expected_hexagram_address);
-        msg!("Received: {}", hexagram_account.key);
-        return Err(CallbackError::InvalidPDA.into());
-    }
+    msg!("\n🔍 Validating callback data...");
+    msg!("Expected image ID: {}", BITORACLE_ICHING_IMAGE_ID);
+    msg!("Expected execution account: {}", execution_account.key);
     
     // Parse the callback data using the helper
     let callback_data: BonsolCallback = handle_callback(
@@ -132,35 +161,103 @@ pub fn process_instruction(
         instruction_data,
     )?;
     
-    // Add detailed diagnostic logging
-    msg!(
-        "Processing callback:\n\
-         - Execution account: {}\n\
-         - Storage account: {}\n\
-         - Input digest size: {}\n\
-         - Number of outputs: {}",
-        execution_account.key,
-        hexagram_account.key,
-        callback_data.input_digest.len(),
-        callback_data.committed_outputs.len()
-    );
+    msg!("\n📋 Callback Data Validation");
+    msg!("Expected structure:");
+    msg!("  - Input digest: 32 bytes");
+    msg!("  - Committed outputs: 86 bytes total");
+    msg!("    • First 32 bytes: Input digest");
+    msg!("    • Next 1 byte: Marker (0xaa)");
+    msg!("    • Next 6 bytes: Line values");
+    msg!("    • Remaining 47 bytes: ASCII art");
+    msg!("Actual:");
+    msg!("  - Input digest: {} bytes", callback_data.input_digest.len());
+    msg!("  - Committed outputs: {} bytes", callback_data.committed_outputs.len());
     
-    // Parse the committed outputs
-    let mut lines = [0u8; 6];
-    let mut ascii_art = String::new();
+    // Process the committed outputs as a single byte slice
+    let outputs = &callback_data.committed_outputs;
+    msg!("\n🔍 Output Size Validation");
+    msg!("Expected: 86 bytes");
+    msg!("Actual: {} bytes", outputs.len());
     
-    // Process each output
-    if let Some(art) = process_output(&callback_data.committed_outputs, &mut lines) {
-        ascii_art = art;
-    }
-    
-    // Validate the data
-    if ascii_art.is_empty() || lines.iter().all(|&x| x == 0) {
-        msg!("Invalid hexagram data received");
-        msg!("ASCII art empty: {}", ascii_art.is_empty());
-        msg!("Lines all zero: {}", lines.iter().all(|&x| x == 0));
+    // Validate total size matches expected format
+    if outputs.len() != 86 {
+        msg!("❌ Size validation failed!");
+        msg!("  - Expected: 86 bytes");
+        msg!("  - Got: {} bytes", outputs.len());
+        msg!("  - Missing: {} bytes", 86 - outputs.len());
         return Err(CallbackError::InvalidHexagramData.into());
     }
+    msg!("✓ Size validation passed");
+    
+    // First 32 bytes are the input digest
+    msg!("\n🔍 Input Digest Validation");
+    msg!("Expected digest: {:02x?}", callback_data.input_digest);
+    msg!("Actual digest:   {:02x?}", &outputs[..32]);
+    if &outputs[..32] != callback_data.input_digest {
+        msg!("❌ Input digest validation failed!");
+        msg!("Digests do not match. This could indicate:");
+        msg!("1. Data corruption during transmission");
+        msg!("2. Incorrect input processing");
+        msg!("3. Malformed callback data");
+        return Err(CallbackError::InvalidHexagramData.into());
+    }
+    msg!("✓ Input digest validation passed");
+    
+    // Next byte is the marker
+    msg!("\n🔍 Marker Validation");
+    msg!("Expected marker: 0xaa");
+    msg!("Actual marker:   {:#04x}", outputs[32]);
+    if outputs[32] != 0xaa {
+        msg!("❌ Marker validation failed!");
+        msg!("Invalid marker byte at position 32");
+        msg!("This indicates the output format is incorrect");
+        return Err(CallbackError::InvalidHexagramData.into());
+    }
+    msg!("✓ Marker validation passed");
+    
+    // Next 6 bytes are the line values
+    msg!("\n🔍 Line Values Validation");
+    let mut lines = [0u8; 6];
+    lines.copy_from_slice(&outputs[33..39]);
+    msg!("Line values (hex): {:02x?}", lines);
+    msg!("Line values (dec): {:?}", lines);
+    msg!("Valid range for each line: 6-9");
+    let valid_lines = lines.iter().all(|&x| (6..=9).contains(&x));
+    if !valid_lines {
+        msg!("❌ Line values validation failed!");
+        msg!("Invalid line values detected. Each value must be between 6 and 9.");
+        msg!("This indicates incorrect I Ching calculation");
+        return Err(CallbackError::InvalidHexagramData.into());
+    }
+    msg!("✓ Line values validation passed");
+    
+    // Remaining bytes are ASCII art
+    msg!("\n🔍 ASCII Art Validation");
+    let ascii_art = String::from_utf8_lossy(&outputs[39..]).to_string();
+    msg!("Expected length: 47 bytes");
+    msg!("Actual length: {} bytes", outputs.len() - 39);
+    msg!("ASCII art content:\n{}", ascii_art);
+    
+    // Validate the data
+    msg!("\n🔍 Final Data Validation");
+    msg!("Checking:");
+    msg!("1. ASCII art is not empty");
+    msg!("2. Line values are not all zero");
+    msg!("Results:");
+    msg!("- ASCII art empty: {}", ascii_art.is_empty());
+    msg!("- Lines all zero: {}", lines.iter().all(|&x| x == 0));
+    
+    if ascii_art.is_empty() || lines.iter().all(|&x| x == 0) {
+        msg!("❌ Final validation failed!");
+        if ascii_art.is_empty() {
+            msg!("Error: Empty ASCII art");
+        }
+        if lines.iter().all(|&x| x == 0) {
+            msg!("Error: All line values are zero");
+        }
+        return Err(CallbackError::InvalidHexagramData.into());
+    }
+    msg!("✓ Final validation passed");
     
     // Create the hexagram data account if it doesn't exist
     if hexagram_account.data_is_empty() {
@@ -179,18 +276,11 @@ pub fn process_instruction(
             rent.minimum_balance(space)
         );
         
-        // Create with PDA
-        let seeds = &[
-            HEXAGRAM_SEED_PREFIX,
-            HEXAGRAM_SEED_VERSION,
-            execution_account.key.as_ref(),
-            &[bump_seed],
-        ];
-        
-        solana_program::program::invoke_signed(
+        // Create account directly without PDA
+        solana_program::program::invoke(
             &system_instruction::create_account(
                 execution_account.key,
-                &expected_hexagram_address,
+                hexagram_account.key,
                 lamports,
                 space as u64,
                 program_id,
@@ -200,7 +290,6 @@ pub fn process_instruction(
                 hexagram_account.clone(),
                 system_program.clone(),
             ],
-            &[seeds],
         )?;
         
         msg!("Hexagram account created successfully");

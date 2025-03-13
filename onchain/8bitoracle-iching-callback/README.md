@@ -89,7 +89,7 @@ npm run derive-pda <program_id> <execution_account>
 
 ### 3. Deploy Program
 ```bash
-solana program deploy target/deploy/8bitoracle_iching_callback.so
+solana program deploy target/deploy/bitoracle_iching_callback.so
 ```
 
 ### 4. Execute I Ching Reading

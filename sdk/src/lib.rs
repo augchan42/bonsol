@@ -4,6 +4,7 @@ use anyhow::Result;
 
 use bytes::Bytes;
 use futures_util::TryFutureExt;
+use log::{debug, error, info, warn};
 use num_traits::FromPrimitive;
 
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
@@ -137,16 +138,28 @@ impl BonsolClient {
     }
 
     pub async fn get_fees(&self, signer: &Pubkey) -> Result<u64> {
+        debug!("Getting fees for signer: {}", signer);
         let fee_accounts = vec![signer.to_owned(), bonsol_interface::ID];
+        debug!("Checking prioritization fees for accounts: {:?}", fee_accounts);
+        
         let compute_fees = self
             .rpc_client
             .get_recent_prioritization_fees(&fee_accounts)
             .await?;
-        Ok(if compute_fees.is_empty() {
+            
+        let fee = if compute_fees.is_empty() {
+            info!("No recent prioritization fees found, using default fee: 5");
             5
         } else {
+            info!(
+                "Using prioritization fee: {} from {} recent fees",
+                compute_fees[0].prioritization_fee,
+                compute_fees.len()
+            );
             compute_fees[0].prioritization_fee
-        })
+        };
+        
+        Ok(fee)
     }
 
     pub async fn deploy_v1(
@@ -178,16 +191,31 @@ impl BonsolClient {
         callback: Option<CallbackConfig>,
         prover_version: Option<ProverVersion>,
     ) -> Result<Vec<Instruction>> {
+        debug!(
+            "Preparing execute_v1 transaction: image_id={}, execution_id={}, tip={}, expiry={}",
+            image_id,
+            execution_id,
+            tip,
+            expiration
+        );
+        
+        debug!("Getting compute fees...");
         let compute_price_val = self.get_fees(signer).await?;
+        info!("Using compute price: {}", compute_price_val);
 
         let fbs_version_or_none = match prover_version {
             Some(version) => {
+                debug!("Using specified prover version");
                 let fbs_version = version.try_into().expect("Unknown prover version");
                 Some(fbs_version)
             }
-            None => None,
+            None => {
+                debug!("Using default prover version");
+                None
+            }
         };
 
+        debug!("Building execute instruction...");
         let instruction = instructions::execute_v1(
             signer,
             signer,
@@ -200,8 +228,17 @@ impl BonsolClient {
             callback,
             fbs_version_or_none,
         )?;
+        
+        debug!("Setting compute budget...");
         let compute = ComputeBudgetInstruction::set_compute_unit_limit(20_000);
         let compute_price = ComputeBudgetInstruction::set_compute_unit_price(compute_price_val);
+        
+        info!(
+            "Transaction prepared with compute budget: limit={}, price={}",
+            20_000,
+            compute_price_val
+        );
+        
         Ok(vec![compute, compute_price, instruction])
     }
 
@@ -210,6 +247,7 @@ impl BonsolClient {
         signer: impl Signer,
         instructions: Vec<Instruction>,
     ) -> Result<()> {
+        info!("Sending standard transaction with {} instructions", instructions.len());
         self.send_txn(signer, instructions, false, 1, 5).await
     }
 
@@ -222,12 +260,43 @@ impl BonsolClient {
         retry_count: usize,
     ) -> Result<()> {
         let mut rt = retry_count;
+        info!(
+            "Sending transaction: skip_preflight={}, retry_timeout={}, retry_count={}",
+            skip_preflight,
+            retry_timeout,
+            retry_count
+        );
+        
         loop {
+            debug!("Getting latest blockhash...");
             let blockhash = self.rpc_client.get_latest_blockhash().await?;
-            let message =
-                v0::Message::try_compile(&signer.pubkey(), &instructions, &[], blockhash)?;
-            let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&signer])?;
-            let sig = self
+            debug!("Got blockhash: {}", blockhash);
+            
+            debug!("Compiling transaction message...");
+            let message = match v0::Message::try_compile(
+                &signer.pubkey(),
+                &instructions,
+                &[],
+                blockhash,
+            ) {
+                Ok(msg) => msg,
+                Err(e) => {
+                    error!("Failed to compile message: {}", e);
+                    return Err(anyhow::anyhow!("Failed to compile message: {}", e));
+                }
+            };
+            
+            debug!("Creating versioned transaction...");
+            let tx = match VersionedTransaction::try_new(VersionedMessage::V0(message), &[&signer]) {
+                Ok(tx) => tx,
+                Err(e) => {
+                    error!("Failed to create transaction: {}", e);
+                    return Err(anyhow::anyhow!("Failed to create transaction: {}", e));
+                }
+            };
+            
+            info!("Sending transaction to network...");
+            let sig = match self
                 .rpc_client
                 .send_transaction_with_config(
                     &tx,
@@ -238,21 +307,46 @@ impl BonsolClient {
                         ..Default::default()
                     },
                 )
-                .await?;
+                .await
+            {
+                Ok(sig) => {
+                    info!("Transaction sent successfully, signature: {}", sig);
+                    sig
+                }
+                Err(e) => {
+                    error!("Failed to send transaction: {}", e);
+                    if rt > 1 {
+                        rt -= 1;
+                        info!("Retrying... {} attempts remaining", rt);
+                        continue;
+                    }
+                    return Err(anyhow::anyhow!("Failed to send transaction: {}", e));
+                }
+            };
 
             let now = Instant::now();
             let confirm_transaction_initial_timeout = Duration::from_secs(retry_timeout);
+            
+            info!("Waiting for transaction confirmation...");
             let (_, status) = loop {
                 let status = self.rpc_client.get_signature_status(&sig).await?;
+                debug!("Transaction status: {:?}", status);
+                
                 if status.is_none() {
                     let blockhash_not_found = !self
                         .rpc_client
                         .is_blockhash_valid(&blockhash, self.rpc_client.commitment())
                         .await?;
-                    if blockhash_not_found && now.elapsed() >= confirm_transaction_initial_timeout {
-                        break (sig, status);
+                        
+                    if blockhash_not_found {
+                        warn!("Blockhash {} no longer valid", blockhash);
+                        if now.elapsed() >= confirm_transaction_initial_timeout {
+                            error!("Transaction confirmation timed out");
+                            break (sig, status);
+                        }
                     }
                 } else {
+                    debug!("Got final transaction status");
                     break (sig, status);
                 }
                 tokio::time::sleep(Duration::from_millis(500)).await;
@@ -260,16 +354,20 @@ impl BonsolClient {
 
             match status {
                 Some(Ok(())) => {
+                    info!("Transaction confirmed successfully");
                     return Ok(());
                 }
                 Some(Err(e)) => {
-                    return Err(anyhow::anyhow!("Transaction Falure Cannot Recover {:?}", e));
+                    error!("Transaction failed with error: {:?}", e);
+                    return Err(anyhow::anyhow!("Transaction Failure Cannot Recover {:?}", e));
                 }
                 None => {
                     rt -= 1;
                     if rt == 0 {
+                        error!("All retry attempts exhausted");
                         return Err(anyhow::anyhow!("Timeout: Failed to confirm transaction"));
                     }
+                    info!("Transaction not confirmed yet, retrying... {} attempts remaining", rt);
                 }
             }
         }
@@ -338,13 +436,30 @@ impl BonsolClient {
         requester_pubkey: &Pubkey,
         execution_id: &str,
     ) -> Result<Option<Vec<u8>>> {
+        debug!(
+            "Getting execution account data for requester={}, execution_id={}",
+            requester_pubkey,
+            execution_id
+        );
+        
         let (er, _) = execution_address(requester_pubkey, execution_id.as_bytes());
+        debug!("Derived execution address: {}", er);
+        
         let account = self
             .rpc_client
             .get_account_with_commitment(&er, CommitmentConfig::confirmed())
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to get account: {:?}", e))?
+            .map_err(|e| {
+                error!("Failed to get account: {}", e);
+                anyhow::anyhow!("Failed to get account: {:?}", e)
+            })?
             .value;
+            
+        if let Some(ref acc) = account {
+            debug!("Found account with {} bytes of data", acc.data.len());
+        } else {
+            warn!("Account not found");
+        }
         
         Ok(account.map(|acc| acc.data))
     }

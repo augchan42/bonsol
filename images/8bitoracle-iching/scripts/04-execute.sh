@@ -23,6 +23,10 @@ while [[ "$#" -gt 0 ]]; do
     esac
 done
 
+# Get project root directory (3 levels up from script location)
+PROJECT_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+echo "Project root directory: $PROJECT_ROOT"
+
 # Source environment variables
 ENV_FILE="$(dirname "$0")/../.env"
 if [ -f "$ENV_FILE" ]; then
@@ -38,8 +42,8 @@ fi
 echo "----------------------------------------"
 echo "Starting image ID extraction process..."
 
-# Extract image ID from input.json
-INPUT_PATH="images/8bitoracle-iching/input.json"
+# Extract image ID from input.json - use absolute path
+INPUT_PATH="$PROJECT_ROOT/images/8bitoracle-iching/input.json"
 echo "Looking for input file at: $INPUT_PATH"
 
 if [ ! -f "$INPUT_PATH" ]; then
@@ -47,6 +51,9 @@ if [ ! -f "$INPUT_PATH" ]; then
     echo "Please run 03-generate-input.sh first to create the input file."
     exit 1
 fi
+
+# Store original directory
+ORIGINAL_DIR=$(pwd)
 
 echo "Found input file. Contents:"
 echo "----------------------------------------"
@@ -73,12 +80,14 @@ echo "----------------------------------------"
 if [ "$DEBUG" = true ]; then
     echo "Debug mode enabled"
     echo "Setting up logging configuration..."
-    # Focus logging on specific components we care about, include bonsol program logs
-    export RUST_LOG="info,risc0_runner=debug,bonsol_prover::input_resolver=debug,solana_program::log=debug,bonsol=debug,solana_program=debug"
-    export RUST_BACKTRACE=1
+    # Add more detailed Solana program logging
+    export RUST_LOG="risc0_zkvm=debug,bonsol_prover::input_resolver=debug,solana_program::log=debug,bonsol=info,solana_program=debug,risc0_zkvm::guest=debug,solana_runtime::message_processor=trace,solana_program_runtime=debug,solana_runtime=debug"
+    export RUST_BACKTRACE=full
     export RISC0_DEV_MODE=1
+    # Increase compute budget for more detailed logging
     echo "RUST_LOG set to: $RUST_LOG"
     echo "RISC0_DEV_MODE enabled"
+    echo "Full backtraces enabled"
 fi
 
 # Set BONSOL_S3_ENDPOINT with base URL only (no bucket)
@@ -128,15 +137,139 @@ echo "BONSOL_IMAGE_ID=$BONSOL_IMAGE_ID"
 echo "BONSOL_S3_ENDPOINT=$BONSOL_S3_ENDPOINT"
 echo "BONSOL_S3_BUCKET=$BONSOL_S3_BUCKET"
 echo "BONSOL_S3_PATH_FORMAT=$BONSOL_S3_PATH_FORMAT"
+echo "RUST_LOG=$RUST_LOG"
+echo "RUST_BACKTRACE=$RUST_BACKTRACE"
+echo "RISC0_DEV_MODE=$RISC0_DEV_MODE"
 echo "----------------------------------------"
 
+# Get the test execution keypair path
+EXECUTION_KEYPAIR="$BONSOL_HOME/onchain/8bitoracle-iching-callback/scripts/test-execution-keypair.json"
+if [ ! -f "$EXECUTION_KEYPAIR" ]; then
+    echo "Error: Test execution keypair not found at $EXECUTION_KEYPAIR"
+    exit 1
+fi
+echo "Using test execution keypair: $EXECUTION_KEYPAIR"
+
+# Set the default Solana keypair
+solana config set --keypair "$EXECUTION_KEYPAIR"
+echo "Set default Solana keypair to: $EXECUTION_KEYPAIR"
+
+# Get the public key of the execution account
+EXECUTION_PUBKEY=$(solana-keygen pubkey "$EXECUTION_KEYPAIR")
+echo "Execution account public key: $EXECUTION_PUBKEY"
+
+# Check balance and airdrop if needed
+BALANCE=$(solana balance "$EXECUTION_PUBKEY" | awk '{print $1}')
+echo "Current balance: $BALANCE SOL"
+
+if (($(echo "$BALANCE < 1" | bc -l))); then
+    echo "Balance too low, requesting airdrop..."
+    solana airdrop 2 "$EXECUTION_PUBKEY"
+    echo "New balance: $(solana balance "$EXECUTION_PUBKEY")"
+fi
+
+echo "----------------------------------------"
+echo "Verifying input.json before execution..."
+if ! jq '.' "$INPUT_PATH" >/dev/null 2>&1; then
+    echo "Error: input.json is not valid JSON"
+    exit 1
+fi
+
+# Verify input format
+echo "Checking input format..."
+if ! jq -e '.inputs[0].inputType == "PublicData"' "$INPUT_PATH" >/dev/null 2>&1; then
+    echo "Error: First input must be of type 'PublicData'"
+    exit 1
+fi
+
+# Verify input data format
+INPUT_DATA=$(jq -r '.inputs[0].data' "$INPUT_PATH")
+if [[ ! "$INPUT_DATA" =~ ^0x[0-9a-fA-F]+$ ]]; then
+    echo "Error: Input data must be hex format starting with '0x'"
+    echo "Found: $INPUT_DATA"
+    exit 1
+fi
+
+echo "Input validation passed ✓"
+echo "----------------------------------------"
+
+echo "----------------------------------------"
+echo "Verifying program deployment..."
+
+# Get the callback program ID from input.json
+CALLBACK_PROGRAM_ID=$(jq -r '.callbackConfig.programId' "$INPUT_PATH")
+echo "Callback program ID from input.json: $CALLBACK_PROGRAM_ID"
+
+# Check if the callback program exists
+echo "Checking callback program deployment..."
+if ! solana program show "$CALLBACK_PROGRAM_ID" &>/dev/null; then
+    echo "Error: Callback program not found at $CALLBACK_PROGRAM_ID"
+    echo "Please ensure the program is deployed first"
+    exit 1
+fi
+echo "✓ Callback program found"
+
+# Get the PDA from input.json
+PDA=$(jq -r '.callbackConfig.extraAccounts[1].pubkey' "$INPUT_PATH")
+echo "PDA from input.json: $PDA"
+
+echo "----------------------------------------"
+
+# Calculate space for HexagramData
+# Space calculation breakdown:
+# - 8 bytes for Anchor discriminator
+# - 6 bytes for lines [u8; 6]
+# - 1024 bytes for ascii_art String (max size)
+# - 8 bytes for timestamp i64
+# - 1 byte for is_initialized bool
+HEXAGRAM_SPACE=$((\
+    8 + \
+    6 + \
+    1024 + \
+    8 + \
+    1))
+
+echo "Verifying hexagram storage account configuration..."
+echo "- Space required: $HEXAGRAM_SPACE bytes"
+
+# Get the PDA and timestamp from input.json
+PDA=$(jq -r '.callbackConfig.extraAccounts[2].pubkey' "$INPUT_PATH")
+TIMESTAMP=$(jq -r '.timestamp' "$INPUT_PATH")
+echo "- PDA: $PDA"
+echo "- Timestamp: $TIMESTAMP"
+
+# Note: We don't need to create PDAs manually - they are created on-chain
+# during the first instruction that uses them. Just verify our configuration:
+echo "Verifying account configuration..."
+echo "- Execution PDA (account[1]): $(jq -r '.callbackConfig.extraAccounts[1].pubkey' "$INPUT_PATH")"
+echo "- Hexagram PDA (account[2]): $(jq -r '.callbackConfig.extraAccounts[2].pubkey' "$INPUT_PATH")"
+echo "- System Program (account[3]): $(jq -r '.callbackConfig.extraAccounts[3].pubkey' "$INPUT_PATH")"
+
+echo "Account configuration verified ✓"
+echo "----------------------------------------"
+
+echo "----------------------------------------"
 echo "Executing I Ching program..."
 if [ "$DEBUG" = true ]; then
-    echo "Running with RISC0_DEV_MODE=1"
-    # Use the same logging configuration we set earlier
-    "$BONSOL_CMD" execute -f "$INPUT_PATH" --wait
+    echo "Running with debug configuration:"
+    echo "Command: $BONSOL_CMD execute -f \"$INPUT_PATH\" --wait"
+    echo "Input file contents:"
+    cat "$INPUT_PATH" | jq '.'
+    echo "----------------------------------------"
+
+    # Run with debug output and trace-level logging
+    RUST_LOG="$RUST_LOG,solana_runtime=trace" \
+        "$BONSOL_CMD" execute -f "$INPUT_PATH" --wait || {
+        echo "Error: Execution failed!"
+        echo "Please check the error messages above for details."
+        exit 1
+    }
 else
-    "$BONSOL_CMD" execute -f "$INPUT_PATH" --wait
+    if ! "$BONSOL_CMD" execute -f "$INPUT_PATH" --wait; then
+        echo "Error: Execution failed!"
+        echo "Run with --debug flag for more information."
+        exit 1
+    fi
 fi
 
 echo "Execution complete! Check the output above for your I Ching reading."

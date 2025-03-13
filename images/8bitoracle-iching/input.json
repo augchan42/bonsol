@@ -1,15 +1,70 @@
 {
+  "timestamp": 1741876861,
   "imageId": "5a883ffc803d906106d4f6512a17dfd8279d8f03197e120b9f0ac54673b8544b",
+  "executionId": "7f2c794bb246330f6a0079ef723fbfd4",
   "executionConfig": {
     "verifyInputHash": false,
     "forwardOutput": true
   },
   "inputs": [
     {
-      "inputType": "PublicUrl",
-      "data": "66417e6c921bd4b6b2dac34ded695d701027e38303d8f8c18fe059914446a60b"
+      "inputType": "PublicData",
+      "data": "0x68e466cf34791b3753686219bee27668ba0b80584ffa987e88d138dcf0f226dc"
     }
   ],
   "tip": 12000,
-  "expiry": 1000
+  "expiry": 1000,
+  "preInstructions": [
+    {
+      "programId": "ComputeBudget111111111111111111111111111111",
+      "accounts": [],
+      "data": [
+        0,
+        88,
+        21,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "programId": "ComputeBudget111111111111111111111111111111",
+      "accounts": [],
+      "data": [
+        1,
+        160,
+        134,
+        1,
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  ],
+  "callbackConfig": {
+    "programId": "2gPzr1AjyYT8JqAndyTDMDUsQsH8y3tc9CuKUtKA2Uv1",
+    "instructionPrefix": [
+      1
+    ],
+    "extraAccounts": [
+      {
+        "pubkey": "HvSmvFK3PnUnKBtTKCeRUHs75fsPSfR5BJrwQQY3RVJX",
+        "isSigner": true,
+        "isWritable": false
+      },
+      {
+        "pubkey": "GomRrusrX9BpEKnQ3MHTzeNZZn9uCpQ3anCJ17jzaKEQ",
+        "isSigner": false,
+        "isWritable": true
+      },
+      {
+        "pubkey": "11111111111111111111111111111111",
+        "isSigner": false,
+        "isWritable": false
+      }
+    ]
+  }
 }

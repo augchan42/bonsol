@@ -3,9 +3,125 @@
 # Exit on error
 set -e
 
+# Function to check if Docker is available and running
+check_docker() {
+    echo "Checking Docker status..."
+
+    # Check if docker command exists
+    if ! command -v docker &>/dev/null; then
+        echo "Error: Docker is not installed. Please install Docker first:"
+        echo "Ubuntu: sudo apt-get install docker.io"
+        echo "Or follow installation guide at: https://docs.docker.com/engine/install/"
+        exit 1
+    fi
+
+    # Check if Docker service is running
+    if ! docker info &>/dev/null; then
+        echo "Docker daemon is not running. Attempting to start Docker..."
+
+        # Try to start Docker service
+        if command -v systemctl &>/dev/null; then
+            echo "Starting Docker with systemctl..."
+            sudo systemctl start docker || {
+                echo "Failed to start Docker with systemctl"
+                echo "Please start Docker manually:"
+                echo "sudo systemctl start docker"
+                exit 1
+            }
+        elif command -v service &>/dev/null; then
+            echo "Starting Docker with service command..."
+            sudo service docker start || {
+                echo "Failed to start Docker with service command"
+                echo "Please start Docker manually:"
+                echo "sudo service docker start"
+                exit 1
+            }
+        else
+            echo "Could not start Docker automatically."
+            echo "Please start Docker manually using your system's service manager."
+            exit 1
+        fi
+
+        # Wait for Docker to be ready
+        echo "Waiting for Docker to be ready..."
+        for i in {1..30}; do
+            if docker info &>/dev/null; then
+                echo "Docker is now running!"
+                break
+            fi
+            if [ $i -eq 30 ]; then
+                echo "Timeout waiting for Docker to start"
+                exit 1
+            fi
+            sleep 1
+        done
+    fi
+
+    # Verify user has permission to use Docker
+    if ! docker ps &>/dev/null; then
+        echo "Error: Current user doesn't have permission to use Docker."
+        echo "Try adding your user to the docker group:"
+        echo "sudo usermod -aG docker $USER"
+        echo "Then log out and back in, or run:"
+        echo "newgrp docker"
+        exit 1
+    fi
+
+    echo "Docker is running and accessible ✓"
+}
+
+# Function to validate input format
+validate_input() {
+    echo "Validating input.json format..."
+    INPUT_FILE="images/8bitoracle-iching/input.json"
+
+    if [ ! -f "$INPUT_FILE" ]; then
+        echo "Error: input.json not found at $INPUT_FILE"
+        echo "Please run 03-generate-input-with-callback.sh first"
+        exit 1
+    fi
+
+    # Check if input.json is valid JSON
+    if ! jq '.' "$INPUT_FILE" >/dev/null 2>&1; then
+        echo "Error: input.json is not valid JSON"
+        exit 1
+    fi
+
+    # Validate required fields
+    REQUIRED_FIELDS=("imageId" "executionId" "executionConfig" "inputs")
+    for field in "${REQUIRED_FIELDS[@]}"; do
+        if ! jq -e ".$field" "$INPUT_FILE" >/dev/null 2>&1; then
+            echo "Error: Missing required field '$field' in input.json"
+            exit 1
+        fi
+    done
+
+    # Validate input format
+    if ! jq -e '.inputs[0].inputType == "PublicData"' "$INPUT_FILE" >/dev/null 2>&1; then
+        echo "Error: First input must be of type 'PublicData'"
+        exit 1
+    fi
+
+    # Validate input data format (should be hex)
+    INPUT_DATA=$(jq -r '.inputs[0].data' "$INPUT_FILE")
+    if [[ ! "$INPUT_DATA" =~ ^0x[0-9a-fA-F]+$ ]]; then
+        echo "Error: Input data must be hex format starting with '0x'"
+        echo "Found: $INPUT_DATA"
+        exit 1
+    fi
+
+    echo "✓ Input validation passed"
+}
+
+# Check Docker before proceeding
+check_docker
+
+# Validate input.json
+validate_input
+
 # Parse command line arguments
 USE_LOCAL=false
-DEBUG=false
+DEBUG=true # Always enable debug mode for better error messages
 REBUILD_BONSOL=false
 while [[ "$#" -gt 0 ]]; do
     case $1 in
@@ -40,20 +156,16 @@ else
     exit 1
 fi
 
-# Enable debug logging and dev mode if --debug flag is passed
-if [ "$DEBUG" = true ]; then
-    echo "Debug mode enabled"
-    # Set logging for both Rust and bonsol components
-    export RUST_LOG="debug,bonsol=debug,risc0_runner=debug"
-    export RUST_BACKTRACE=1
-    export CARGO_TERM_VERBOSE=true
-    # Enable RISC0 dev mode for faster builds and mock proofs
-    export RISC0_DEV_MODE=1
-    echo "RISC0_DEV_MODE enabled for all components"
-    echo "Dev mode feature enabled for compilation"
-else
-    CARGO_FLAGS=""
-fi
+# Enable RISC0 debug mode and logging
+export RISC0_DEV_MODE=1
+export RUST_LOG="debug,risc0_zkvm=debug"
+export RUST_BACKTRACE=1
+
+echo "Build Configuration:"
+echo "  RISC0_DEV_MODE: $RISC0_DEV_MODE"
+echo "  RUST_LOG: $RUST_LOG"
+echo "  RUST_BACKTRACE: $RUST_BACKTRACE"
+echo "  Debug mode: $DEBUG"
 
 # Store original directory
 ORIGINAL_DIR=$(pwd)
@@ -117,7 +229,6 @@ if [ "$DEBUG" = true ]; then
     echo "  Environment:"
     echo "    RUST_LOG=$RUST_LOG"
     echo "    RUST_BACKTRACE=$RUST_BACKTRACE"
-    echo "    CARGO_TERM_VERBOSE=$CARGO_TERM_VERBOSE"
     echo "    RISC0_DEV_MODE=$RISC0_DEV_MODE"
     echo "    BONSOL_HOME=$BONSOL_HOME"
 fi

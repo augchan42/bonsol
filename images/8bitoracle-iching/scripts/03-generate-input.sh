@@ -10,17 +10,23 @@ IMAGE_ID=""
 
 while [[ "$#" -gt 0 ]]; do
     case $1 in
-        --local) USE_LOCAL=true; shift ;;
-        --estimate-cycles) ESTIMATE_CYCLES=true; shift ;;
-        *) 
-            if [ -z "$IMAGE_ID" ]; then
-                IMAGE_ID="$1"
-            else
-                echo "Error: Unexpected argument: $1"
-                exit 1
-            fi
-            shift
-            ;;
+    --local)
+        USE_LOCAL=true
+        shift
+        ;;
+    --estimate-cycles)
+        ESTIMATE_CYCLES=true
+        shift
+        ;;
+    *)
+        if [ -z "$IMAGE_ID" ]; then
+            IMAGE_ID="$1"
+        else
+            echo "Error: Unexpected argument: $1"
+            exit 1
+        fi
+        shift
+        ;;
     esac
 done
 
@@ -35,7 +41,7 @@ fi
 ENV_FILE="$(dirname "$0")/../.env"
 if [ -f "$ENV_FILE" ]; then
     echo "Loading environment variables from $ENV_FILE"
-    set -a  # automatically export all variables
+    set -a # automatically export all variables
     source "$ENV_FILE"
     set +a
 else
@@ -62,7 +68,7 @@ echo "Generating random seed for I Ching reading..."
 RANDOM_SEED=$(openssl rand -hex 32)
 
 # Get RISC-V cycle estimate if requested
-TIP_AMOUNT=12000  # Default tip amount
+TIP_AMOUNT=12000 # Default tip amount
 if [ "$ESTIMATE_CYCLES" = true ]; then
     echo "Estimating RISC-V cycles for ZK program..."
     ESTIMATE_OUTPUT=$("$BONSOL_CMD" estimate --manifest-path images/8bitoracle-iching/manifest.json)
@@ -83,7 +89,7 @@ fi
 OUTPUT_PATH="images/8bitoracle-iching/input.json"
 echo "Creating input file at $OUTPUT_PATH"
 
-cat > "$OUTPUT_PATH" << EOF
+cat >"$OUTPUT_PATH" <<EOF
 {
   "imageId": "$IMAGE_ID",
   "executionConfig": {
@@ -107,4 +113,4 @@ echo "Tip amount set to: $TIP_AMOUNT"
 if [ "$ESTIMATE_CYCLES" = true ] && [ -n "$CYCLE_COUNT" ]; then
     echo "Estimated RISC-V cycles: $CYCLE_COUNT"
 fi
-echo "You can now run 04-execute.sh to execute the program." 
+echo "You can now run 04-execute.sh to execute the program."
