@@ -29,6 +29,7 @@ use {
         FakeReceipt, ApiClient, ProverOpts, AssetRequest,
         MaybePruned,
     },
+    risc0_zkp::verify::VerificationError,
     solana_sdk::{pubkey::Pubkey, signature::Signature, instruction::AccountMeta,},
     std::{
         convert::TryInto, env::consts::ARCH, fs, io::Cursor, path::Path, sync::Arc, time::Duration,
@@ -77,6 +78,19 @@ pub enum Risc0RunnerError {
     InvalidProverVersion(ProverVersion, ProverVersion),
     #[error("Proof verification failed: {0}")]
     ProofVerificationError(String),
+}
+
+// Update error conversion implementation
+impl From<VerificationError> for Risc0RunnerError {
+    fn from(err: VerificationError) -> Self {
+        Risc0RunnerError::ProofVerificationError(err.to_string())
+    }
+}
+
+impl From<tokio::task::JoinError> for Risc0RunnerError {
+    fn from(_err: tokio::task::JoinError) -> Self {
+        Risc0RunnerError::ProofGenerationError
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -384,7 +398,7 @@ pub async fn handle_claim<'a>(
         emit_event!(MetricEvents::ClaimReceived, execution_id => execution_id);
         
         if let ClaimStatus::Claiming = claim.status {
-            let result: anyhow::Result<()> = async {
+            let result: Result<(), Risc0RunnerError> = async {
                 // Get and validate image
                 let image = loaded_images.get(&claim.image_id)
                     .ok_or_else(|| {
@@ -445,15 +459,15 @@ pub async fn handle_claim<'a>(
                 
                 // Generate proof
                 let result: Result<(Journal, Digest, Receipt), Risc0RunnerError> = 
-                    tokio::task::spawn_blocking(move || {
-                        risc0_prove(mem_image, inputs).map_err(|e| {
+                    tokio::task::spawn(async move {
+                        risc0_prove(mem_image, inputs).await.map_err(|e| {
                             error!("Error generating proof: {:?}", e);
                             Risc0RunnerError::ProofGenerationError
                         })
                     })
                     .await?;
 
-                let (journal, _digest, receipt) = result?;
+                let (journal, digest, receipt) = result?;
 
                 // Extract assumptions digest before moving receipt
                 let assumptions_digest = receipt.claim()?.digest();
@@ -1134,12 +1148,12 @@ fn create_dev_succinct_receipt(
 }
 
 // proving function, no async this is cpu/gpu intesive
-fn risc0_prove(
+async fn risc0_prove(
     memory_image: MemoryImage,
     sorted_inputs: Vec<ProgramInput>,
 ) -> Result<(Journal, Digest, Receipt)> {
     let image_id = memory_image.compute_id();
-    let mut exec = new_risc0_exec_env(memory_image, sorted_inputs)?;
+    let mut exec = new_risc0_exec_env(memory_image, sorted_inputs).await?;
     
     // Run the session first - needed for both dev mode and production
     debug!("Running executor session");

@@ -20,7 +20,7 @@ use {
 pub const BITORACLE_ICHING_IMAGE_ID: &str = "5a883ffc803d906106d4f6512a17dfd8279d8f03197e120b9f0ac54673b8544b";
 
 // Add version constant
-pub const CALLBACK_VERSION: &str = "v0.1.3"; // Increment this each time we deploy
+pub const CALLBACK_VERSION: &str = "v0.1.4"; // Increment this each time we deploy
 
 #[derive(Error, Debug)]
 pub enum CallbackError {
@@ -152,6 +152,8 @@ pub fn process_instruction(
     msg!("\n🔍 Validating callback data...");
     msg!("Expected image ID: {}", BITORACLE_ICHING_IMAGE_ID);
     msg!("Expected execution account: {}", execution_account.key);
+    msg!("Instruction data length: {} bytes", instruction_data.len());
+    msg!("First 32 bytes of instruction data: {:02x?}", &instruction_data[..32.min(instruction_data.len())]);
     
     // Parse the callback data using the helper
     let callback_data: BonsolCallback = handle_callback(
@@ -172,6 +174,8 @@ pub fn process_instruction(
     msg!("Actual:");
     msg!("  - Input digest: {} bytes", callback_data.input_digest.len());
     msg!("  - Committed outputs: {} bytes", callback_data.committed_outputs.len());
+    msg!("  - Input digest: {:02x?}", callback_data.input_digest);
+    msg!("  - First 32 bytes of outputs: {:02x?}", &callback_data.committed_outputs[..32.min(callback_data.committed_outputs.len())]);
     
     // Process the committed outputs as a single byte slice
     let outputs = &callback_data.committed_outputs;
@@ -185,6 +189,7 @@ pub fn process_instruction(
         msg!("  - Expected: 86 bytes");
         msg!("  - Got: {} bytes", outputs.len());
         msg!("  - Missing: {} bytes", 86 - outputs.len());
+        msg!("  - Full output: {:02x?}", outputs);
         return Err(CallbackError::InvalidHexagramData.into());
     }
     msg!("✓ Size validation passed");
@@ -199,6 +204,9 @@ pub fn process_instruction(
         msg!("1. Data corruption during transmission");
         msg!("2. Incorrect input processing");
         msg!("3. Malformed callback data");
+        msg!("Expected: {:02x?}", callback_data.input_digest);
+        msg!("Got:      {:02x?}", &outputs[..32]);
+        msg!("Full output: {:02x?}", outputs);
         return Err(CallbackError::InvalidHexagramData.into());
     }
     msg!("✓ Input digest validation passed");
@@ -210,7 +218,10 @@ pub fn process_instruction(
     if outputs[32] != 0xaa {
         msg!("❌ Marker validation failed!");
         msg!("Invalid marker byte at position 32");
+        msg!("Expected: 0xaa");
+        msg!("Got:      {:#04x}", outputs[32]);
         msg!("This indicates the output format is incorrect");
+        msg!("Full output: {:02x?}", outputs);
         return Err(CallbackError::InvalidHexagramData.into());
     }
     msg!("✓ Marker validation passed");
@@ -222,11 +233,18 @@ pub fn process_instruction(
     msg!("Line values (hex): {:02x?}", lines);
     msg!("Line values (dec): {:?}", lines);
     msg!("Valid range for each line: 6-9");
+    msg!("Checking each line value:");
+    for (i, &line) in lines.iter().enumerate() {
+        msg!("Line {}: {} (valid: {})", i + 1, line, (6..=9).contains(&line));
+    }
     let valid_lines = lines.iter().all(|&x| (6..=9).contains(&x));
     if !valid_lines {
         msg!("❌ Line values validation failed!");
         msg!("Invalid line values detected. Each value must be between 6 and 9.");
-        msg!("This indicates incorrect I Ching calculation");
+        msg!("Line values (hex): {:02x?}", lines);
+        msg!("Line values (dec): {:?}", lines);
+        msg!("Invalid values: {:?}", lines.iter().enumerate().filter(|(_, &x)| !(6..=9).contains(&x)).collect::<Vec<_>>());
+        msg!("Full output: {:02x?}", outputs);
         return Err(CallbackError::InvalidHexagramData.into());
     }
     msg!("✓ Line values validation passed");
@@ -236,7 +254,12 @@ pub fn process_instruction(
     let ascii_art = String::from_utf8_lossy(&outputs[39..]).to_string();
     msg!("Expected length: 47 bytes");
     msg!("Actual length: {} bytes", outputs.len() - 39);
+    msg!("ASCII art bytes: {:02x?}", &outputs[39..]);
     msg!("ASCII art content:\n{}", ascii_art);
+    msg!("ASCII art byte values:");
+    for (i, &byte) in outputs[39..].iter().enumerate() {
+        msg!("Byte {}: {:#04x} ({})", i, byte, byte as char);
+    }
     
     // Validate the data
     msg!("\n🔍 Final Data Validation");
@@ -251,40 +274,72 @@ pub fn process_instruction(
         msg!("❌ Final validation failed!");
         if ascii_art.is_empty() {
             msg!("Error: Empty ASCII art");
+            msg!("ASCII art bytes: {:02x?}", &outputs[39..]);
         }
         if lines.iter().all(|&x| x == 0) {
             msg!("Error: All line values are zero");
+            msg!("Line values: {:?}", lines);
         }
+        msg!("Full output: {:02x?}", outputs);
         return Err(CallbackError::InvalidHexagramData.into());
     }
     msg!("✓ Final validation passed");
     
     // Create the hexagram data account if it doesn't exist
     if hexagram_account.data_is_empty() {
-        msg!("Creating new 8BitOracle hexagram account");
+        msg!("\n🔍 Account Creation");
+        msg!("Initial account state:");
+        msg!("  - Data length: {} bytes", hexagram_account.data_len());
+        msg!("  - Lamports: {}", hexagram_account.lamports());
+        msg!("  - Owner: {}", hexagram_account.owner);
+        msg!("  - Executable: {}", hexagram_account.executable);
+        msg!("  - Rent epoch: {}", hexagram_account.rent_epoch);
+
         let rent = Rent::get()?;
-        let space = 1000; // Enough space for the struct with ASCII art
+        let space = 8 + 6 + 1024 + 8 + 1;
         let lamports = rent.minimum_balance(space);
         
         msg!(
-            "Account creation details:\n\
+            "Account creation parameters:\n\
              - Space: {} bytes\n\
-             - Lamports: {}\n\
-             - Rent exempt minimum: {}",
+             - Breakdown:\n\
+               • Discriminator: 8 bytes\n\
+               • Lines array: 6 bytes\n\
+               • ASCII art: 1024 bytes\n\
+               • Timestamp: 8 bytes\n\
+               • Initialized flag: 1 byte\n\
+             - Lamports needed: {}\n\
+             - Rent exempt minimum: {}\n\
+             - Payer: {}\n\
+             - New account: {}\n\
+             - Owner (program): {}",
             space,
             lamports,
-            rent.minimum_balance(space)
+            rent.minimum_balance(space),
+            execution_account.key,
+            hexagram_account.key,
+            program_id
         );
         
-        // Create account directly without PDA
+        msg!("Creating account with system instruction...");
+        let create_account_ix = system_instruction::create_account(
+            execution_account.key,
+            hexagram_account.key,
+            lamports,
+            space as u64,
+            program_id,
+        );
+        msg!("System instruction created:");
+        msg!("  - Program: {}", create_account_ix.program_id);
+        msg!("  - Accounts: {} accounts", create_account_ix.accounts.len());
+        for (i, acc) in create_account_ix.accounts.iter().enumerate() {
+            msg!("    {}. pubkey: {}, is_signer: {}, is_writable: {}", 
+                i + 1, acc.pubkey, acc.is_signer, acc.is_writable);
+        }
+        
+        msg!("Invoking system instruction...");
         solana_program::program::invoke(
-            &system_instruction::create_account(
-                execution_account.key,
-                hexagram_account.key,
-                lamports,
-                space as u64,
-                program_id,
-            ),
+            &create_account_ix,
             &[
                 execution_account.clone(),
                 hexagram_account.clone(),
@@ -292,8 +347,29 @@ pub fn process_instruction(
             ],
         )?;
         
-        msg!("Hexagram account created successfully");
+        msg!("\n🔍 Account Creation Result");
+        msg!("Account state after creation:");
+        msg!("  - Data length: {} bytes", hexagram_account.data_len());
+        msg!("  - Lamports: {}", hexagram_account.lamports());
+        msg!("  - Owner: {}", hexagram_account.owner);
+        msg!("  - Executable: {}", hexagram_account.executable);
+        msg!("  - Rent epoch: {}", hexagram_account.rent_epoch);
+        
+        if hexagram_account.data_len() != space {
+            msg!("❌ WARNING: Account size mismatch!");
+            msg!("  - Expected: {} bytes", space);
+            msg!("  - Actual: {} bytes", hexagram_account.data_len());
+        } else {
+            msg!("✓ Account created with correct size");
+        }
     }
+    
+    msg!("\n🔍 Data Serialization");
+    msg!("Preparing hexagram data:");
+    msg!("  - Lines array size: {} bytes", std::mem::size_of::<[u8; 6]>());
+    msg!("  - ASCII art length: {} bytes", ascii_art.len());
+    msg!("  - Timestamp size: {} bytes", std::mem::size_of::<i64>());
+    msg!("  - Bool size: {} byte", std::mem::size_of::<bool>());
     
     // Create and serialize the hexagram data
     let hexagram = HexagramData {
@@ -303,18 +379,33 @@ pub fn process_instruction(
         is_initialized: true,
     };
     
+    msg!("Serializing data...");
+    let mut data = hexagram_account.try_borrow_mut_data()?;
+    msg!("  - Available buffer size: {} bytes", data.len());
+    msg!("  - Required size: {} bytes", 8 + 6 + ascii_art.len() + 8 + 1);
+    
     // Store the data
-    hexagram.serialize(&mut *hexagram_account.try_borrow_mut_data()?)?;
+    hexagram.serialize(&mut *data)?;
+    
+    msg!("\n🔍 Final Account State");
+    msg!("Account data after serialization:");
+    msg!("  - Data length: {} bytes", hexagram_account.data_len());
+    msg!("  - First 32 bytes: {:02x?}", &hexagram_account.try_borrow_data()?[..32.min(hexagram_account.data_len())]);
+    msg!("  - Owner: {}", hexagram_account.owner);
+    msg!("  - Lamports: {}", hexagram_account.lamports());
     
     msg!("8BitOracle hexagram data stored successfully");
     msg!(
         "Final hexagram state:\n\
          - Lines: {:?}\n\
+         - ASCII art length: {} bytes\n\
+         - ASCII art content:\n{}\n\
          - Timestamp: {}\n\
-         - ASCII Art:\n{}",
+         - Is initialized: true",
         lines,
-        hexagram.timestamp,
-        ascii_art
+        ascii_art.len(),
+        ascii_art,
+        hexagram.timestamp
     );
     
     Ok(())

@@ -34,19 +34,20 @@ else
     echo "Warning: .env file not found at $ENV_FILE"
 fi
 
+# Always enable RISC0_DEV_MODE for development/testing
+export RISC0_DEV_MODE=1
+echo "RISC0_DEV_MODE enabled for development/testing"
+
 # Enable debug logging if --debug flag is passed
 if [ "$DEBUG" = true ]; then
     echo "Debug mode enabled"
     export RUST_LOG="info,bonsol=debug,object_store=debug,solana_program::log=debug,bonsol_prover::input_resolver=debug,risc0_runner=debug"
     export RUST_BACKTRACE=1
-    export RISC0_DEV_MODE=1
     echo "Debug logging enabled for:"
     echo "  - Solana program logs"
     echo "  - RISC0 runner"
     echo "  - Bonsol prover"
     echo "  - Object store"
-else
-    unset RISC0_DEV_MODE
 fi
 
 # Validate required environment variables

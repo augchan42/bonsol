@@ -63,6 +63,7 @@ fi
 
 # Set comprehensive logging to capture all program output
 export RUST_LOG="error,\
+solana_metrics::metrics=error,\
 solana_program::log=info,\
 solana_runtime::message_processor::stable_log=info"
 

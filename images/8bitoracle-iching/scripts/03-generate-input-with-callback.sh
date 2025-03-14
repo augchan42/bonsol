@@ -142,6 +142,7 @@ jq -n \
   --arg randomSeed "$RANDOM_SEED" \
   --arg programId "$CALLBACK_PROGRAM_ID" \
   --arg executionPda "$EXECUTION_PDA" \
+  --arg hexagramPda "$HEXAGRAM_PDA" \
   --arg storagePubkey "$STORAGE_PUBKEY" \
   '{
     "timestamp": ($timestamp | tonumber),
@@ -199,7 +200,7 @@ jq -n \
           "isWritable": false
         },
         {
-          "pubkey": $storagePubkey,
+          "pubkey": $hexagramPda,
           "isSigner": false,
           "isWritable": true
         },
@@ -219,5 +220,6 @@ echo "Successfully generated input.json at: $INPUT_FILE"
 echo "Generated with:"
 echo "  Execution ID: $EXECUTION_ID"
 echo "  Execution PDA: $EXECUTION_PDA"
+echo "  Hexagram PDA: $HEXAGRAM_PDA"
 echo "  Storage Account: $STORAGE_PUBKEY"
 echo "You can now run 04-execute.sh to execute the I Ching program"

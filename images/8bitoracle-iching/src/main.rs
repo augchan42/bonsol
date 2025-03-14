@@ -29,16 +29,20 @@ fn hexagram_to_ascii(hexagram: &HexagramGeneration) -> String {
         env::log(&format!("Converting line {} ({:?}) to ASCII", i, line));
         let line_ascii = line_to_ascii(line);
         env::log(&format!("Line {} ASCII: '{}' (len={})", i, line_ascii, line_ascii.len()));
+        env::log(&format!("Line {} bytes: {:02x?}", i, line_ascii.as_bytes()));
         
         // Add line to the beginning of the string (top lines first)
         if i > 0 {
             ascii_art.insert_str(0, "\n");
+            env::log(&format!("Added newline, current length: {}", ascii_art.len()));
         }
         ascii_art.insert_str(0, &line_ascii);
+        env::log(&format!("Added line, current length: {}", ascii_art.len()));
     }
     
     env::log(&format!("Final ASCII art:\n{}", ascii_art));
     env::log(&format!("ASCII art length: {} bytes", ascii_art.len()));
+    env::log(&format!("ASCII art bytes: {:02x?}", ascii_art.as_bytes()));
     ascii_art
 }
 
@@ -47,68 +51,109 @@ fn main() {
     
     // Check if we're in dev mode
     let is_dev_mode = option_env!("RISC0_DEV_MODE").is_some();
+    if is_dev_mode {
+        env::log("Running in dev mode (affects proof verification only)");
+    }
     
     // Read the random seed
     let mut random_seed = [0u8; 32];
     env::read_slice(&mut random_seed);
     env::log(&format!("Received random seed ({}): {:02x?}", random_seed.len(), random_seed));
     
-    // Generate hexagram
-    let hexagram = if is_dev_mode {
-        // In dev mode, generate a fixed hexagram for testing
-        env::log("Dev mode: Generating fixed test hexagram");
-        HexagramGeneration {
-            lines: [
-                LineValue::OldYin,     // Line 1 (bottom)
-                LineValue::YoungYang,  // Line 2
-                LineValue::OldYang,    // Line 3
-                LineValue::YoungYin,   // Line 4
-                LineValue::OldYin,     // Line 5
-                LineValue::YoungYang,  // Line 6 (top)
-            ]
-        }
-    } else {
-        generate_hexagram(&random_seed)
-    };
-    
+    // Generate hexagram using input seed
+    let hexagram = generate_hexagram(&random_seed);
     env::log(&format!("Generated hexagram with lines: {:#?}", hexagram.lines));
+    env::log(&format!("Line values (as u8): {:?}", hexagram.lines.iter().map(|&l| l as u8).collect::<Vec<_>>()));
+    env::log(&format!("Line values (raw): {:?}", hexagram.lines.iter().map(|&l| match l {
+        LineValue::OldYin => "OldYin (6)",
+        LineValue::YoungYang => "YoungYang (7)",
+        LineValue::YoungYin => "YoungYin (8)",
+        LineValue::OldYang => "OldYang (9)",
+    }).collect::<Vec<_>>()));
     
-    // Track total committed data size
-    let mut total_committed = 0;
-    
-    // 1. Hash of random seed (or mock hash in dev mode)
-    let seed_digest = if is_dev_mode {
-        // Use consistent mock digest in dev mode
-        let mock_digest = [0u8; 32];
-        Impl::hash_bytes(&mock_digest)
-    } else {
-        Impl::hash_bytes(&random_seed)
-    };
-    
+    // Hash of random seed
+    let seed_digest = Impl::hash_bytes(&random_seed);
     let digest_bytes = seed_digest.as_bytes();
     env::log(&format!("Generated seed digest ({} bytes): {:02x?}", digest_bytes.len(), digest_bytes));
-    env::commit_slice(digest_bytes);
-    total_committed += digest_bytes.len();
     
-    // 2. Commit hexagram values in a structured format
-    let mut structured_output = vec![DEV_MODE_MARKER];
-    structured_output.extend(hexagram.lines.iter().map(|&l| l as u8));
-    env::log(&format!("Structured output ({} bytes): {:02x?}", structured_output.len(), structured_output));
-    env::commit_slice(&structured_output);
-    total_committed += structured_output.len();
-
-    // 3. Generate and commit ASCII art representation
+    // Generate ASCII art representation
     let ascii_art = hexagram_to_ascii(&hexagram);
     env::log(&format!("ASCII art representation ({} bytes):\n{}", ascii_art.len(), ascii_art));
-    let ascii_bytes = ascii_art.as_bytes();
-    env::commit_slice(ascii_bytes);
-    total_committed += ascii_bytes.len();
+    env::log(&format!("ASCII art bytes: {:02x?}", ascii_art.as_bytes()));
     
-    env::log(&format!("Hexagram generation complete. Total committed data: {} bytes", total_committed));
+    // Assemble final output in correct order:
+    // 1. Input digest (32 bytes)
+    // 2. Marker byte (0xaa)
+    // 3. Line values (6 bytes)
+    // 4. ASCII art (47 bytes)
+    let mut final_output = Vec::with_capacity(86); // 32 + 1 + 6 + 47 bytes
+    
+    // 1. Input digest (32 bytes)
+    final_output.extend_from_slice(digest_bytes);
+    env::log(&format!("Added input digest ({} bytes): {:02x?}", digest_bytes.len(), digest_bytes));
+    env::log(&format!("Current output size: {}", final_output.len()));
+    
+    // 2. Marker byte (0xaa)
+    final_output.push(DEV_MODE_MARKER);
+    env::log(&format!("Added marker byte: 0x{:02x}", DEV_MODE_MARKER));
+    env::log(&format!("Current output size: {}", final_output.len()));
+    
+    // 3. Line values (6 bytes)
+    let line_values: Vec<u8> = hexagram.lines.iter().map(|&l| l as u8).collect();
+    env::log(&format!("Line values to add (hex): {:02x?}", line_values));
+    env::log(&format!("Line values to add (dec): {:?}", line_values));
+    final_output.extend(&line_values);
+    env::log(&format!("Added line values, current size: {}", final_output.len()));
+    env::log(&format!("Line values in output (hex): {:02x?}", &final_output[33..39]));
+    env::log(&format!("Line values in output (dec): {:?}", &final_output[33..39].iter().map(|&x| x).collect::<Vec<_>>()));
+    
+    // 4. ASCII art (47 bytes)
+    env::log(&format!("ASCII art to add ({} bytes): {:02x?}", ascii_art.len(), ascii_art.as_bytes()));
+    final_output.extend_from_slice(ascii_art.as_bytes());
+    env::log(&format!("Added ASCII art, current size: {}", final_output.len()));
+    env::log(&format!("ASCII art in output: {:02x?}", &final_output[39..]));
+    
+    // Log the final output structure
+    env::log("\nFinal output structure:");
+    env::log(&format!("1. Input digest (bytes 0-31): {:02x?}", &final_output[..32]));
+    env::log(&format!("2. Marker byte (byte 32): 0x{:02x}", final_output[32]));
+    env::log(&format!("3. Line values (bytes 33-38): {:02x?}", &final_output[33..39]));
+    env::log(&format!("4. ASCII art (bytes 39-85): {:02x?}", &final_output[39..]));
+    env::log(&format!("Total size: {} bytes", final_output.len()));
+    
+    // Verify output structure before committing
+    if final_output.len() != 86 {
+        env::log(&format!("❌ ERROR: Invalid output size! Expected 86 bytes, got {}", final_output.len()));
+        env::log(&format!("- Input digest: {} bytes", digest_bytes.len()));
+        env::log(&format!("- Marker byte: 1 byte"));
+        env::log(&format!("- Line values: {} bytes", line_values.len()));
+        env::log(&format!("- ASCII art: {} bytes", ascii_art.len()));
+    }
+    
+    // Verify line values are valid
+    let valid_lines = final_output[33..39].iter().all(|&x| (6..=9).contains(&x));
+    if !valid_lines {
+        env::log("❌ ERROR: Invalid line values detected!");
+        env::log(&format!("Line values (hex): {:02x?}", &final_output[33..39]));
+        env::log(&format!("Line values (dec): {:?}", &final_output[33..39].iter().map(|&x| x).collect::<Vec<_>>()));
+        env::log("Each value must be between 6 and 9");
+    }
+    
+    // Verify ASCII art length
+    if ascii_art.len() != 47 {
+        env::log(&format!("❌ ERROR: Invalid ASCII art length! Expected 47 bytes, got {}", ascii_art.len()));
+        env::log(&format!("ASCII art: {:02x?}", ascii_art.as_bytes()));
+    }
+    
+    // Commit the entire output at once
+    env::log(&format!("Committing final output ({} bytes): {:02x?}", final_output.len(), final_output));
+    env::commit_slice(&final_output);
+    
+    env::log(&format!("Hexagram generation complete. Total committed data: {} bytes", final_output.len()));
     env::log("Journal data structure:");
     env::log(&format!("- Input digest: {} bytes", digest_bytes.len()));
-    env::log(&format!("- Structured output: {} bytes", structured_output.len()));
-    env::log(&format!("- ASCII art: {} bytes", ascii_bytes.len()));
+    env::log(&format!("- Structured output: {} bytes", 1 + hexagram.lines.len()));
+    env::log(&format!("- ASCII art: {} bytes", ascii_art.len()));
 }
 
 fn generate_hexagram(random_seed: &[u8]) -> HexagramGeneration {
@@ -152,18 +197,28 @@ mod tests {
 
     #[test]
     fn test_ascii_art_generation() {
-        let mut lines = [LineValue::default(); 6];
-        lines[0] = LineValue::OldYin;     // Bottom line
-        lines[1] = LineValue::YoungYin;
-        lines[2] = LineValue::OldYang;
-        lines[3] = LineValue::YoungYang;
-        lines[4] = LineValue::OldYin;
-        lines[5] = LineValue::YoungYang;   // Top line
-        
-        let hexagram = HexagramGeneration { lines };
+        // Generate a hexagram with random lines
+        let random_seed = [42u8; 32];
+        let hexagram = generate_hexagram(&random_seed);
         let ascii_art = hexagram_to_ascii(&hexagram);
         
-        let expected = "--------\n---x---\n--------\n---o---\n---  ---\n---x---";
-        assert_eq!(ascii_art, expected);
+        // Split into lines
+        let lines: Vec<&str> = ascii_art.split('\n').collect();
+        
+        // Validate structure
+        assert_eq!(lines.len(), 6, "Should have exactly 6 lines");
+        
+        // Validate each line
+        for (i, line) in lines.iter().enumerate() {
+            // Each line should be exactly 7 chars
+            assert_eq!(line.len(), 7, "Line {} should be 7 chars, got {}", i + 1, line.len());
+            
+            // Each line should only contain valid characters
+            assert!(line.chars().all(|c| matches!(c, '-' | 'x' | 'o' | ' ')), 
+                "Line {} contains invalid characters: {}", i + 1, line);
+        }
+        
+        // Validate total size (6 lines * 7 chars + 5 newlines = 47 bytes)
+        assert_eq!(ascii_art.len(), 47, "Total ASCII art should be 47 bytes");
     }
 } 

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signer::Signer;
 use tokio::task::{JoinHandle, JoinSet};
-use tracing::{debug, error, trace};
+use tracing::{debug, error, info};
 
 use crate::util::get_body_max_size;
 
@@ -111,16 +111,17 @@ impl DefaultInputResolver {
         input: InputT,
         task_set: &mut JoinSet<Result<ResolvedInput>>,
     ) -> Result<ProgramInput> {
-        debug!("Resolving input {} of type {:?}", index, input.input_type);
+        info!("Starting resolution for input {} of type {:?}", index, input.input_type);
         debug!("Input data length: {:?}", input.data.as_ref().map(|d| d.len()));
         
         match input.input_type {
             InputType::PublicUrl => {
-                debug!("Processing PublicUrl input {}", index);
+                info!("Processing PublicUrl input {}", index);
                 let data = input.data.ok_or_else(|| {
                     error!("Input {} missing data", index);
                     anyhow::anyhow!("Invalid data")
                 })?;
+                info!("Successfully resolved PublicUrl input {} ({} bytes)", index, data.len());
                 Ok(ProgramInput::Resolved(ResolvedInput {
                     index,
                     data: data.to_vec(),
@@ -133,11 +134,32 @@ impl DefaultInputResolver {
                     anyhow::anyhow!("Invalid data")
                 })?;
                 
-                let url_str = from_utf8(&url_bytes)?.to_string();
-                let url = Url::parse(&url_str)?;
+                let url_str = match from_utf8(&url_bytes) {
+                    Ok(s) => {
+                        debug!("Successfully parsed URL string for input {}", index);
+                        s.to_string()
+                    },
+                    Err(e) => {
+                        error!("Failed to parse URL string for input {}: {}", index, e);
+                        return Err(anyhow::anyhow!("Invalid URL string: {}", e));
+                    }
+                };
+                
+                let url = match Url::parse(&url_str) {
+                    Ok(u) => {
+                        debug!("Successfully parsed URL for input {}: {}", index, u);
+                        u
+                    },
+                    Err(e) => {
+                        error!("Failed to parse URL for input {}: {}", index, e);
+                        error!("URL string: {}", url_str);
+                        return Err(anyhow::anyhow!("Invalid URL: {}", e));
+                    }
+                };
                 
                 match input.input_type {
                     InputType::Private => {
+                        info!("Created unresolved private input {} with URL: {}", index, url);
                         Ok(ProgramInput::Unresolved(UnresolvedInput {
                             index,
                             url,
@@ -145,7 +167,7 @@ impl DefaultInputResolver {
                         }))
                     },
                     InputType::PublicProof => {
-                        debug!("Input {} - Spawning proof download task", index);
+                        info!("Spawning proof download task for input {} from {}", index, url);
                         task_set.spawn(download_public_input(
                             client,
                             index,
@@ -164,7 +186,12 @@ impl DefaultInputResolver {
                 }
             }
             InputType::PublicData => {
-                let data = input.data.ok_or(anyhow::anyhow!("Invalid data"))?;
+                info!("Processing PublicData input {}", index);
+                let data = input.data.ok_or_else(|| {
+                    error!("Input {} missing data", index);
+                    anyhow::anyhow!("Invalid data")
+                })?;
+                info!("Successfully resolved PublicData input {} ({} bytes)", index, data.len());
                 Ok(ProgramInput::Resolved(ResolvedInput {
                     index,
                     data,
@@ -172,11 +199,17 @@ impl DefaultInputResolver {
                 }))
             }
             InputType::PublicAccountData => {
-                let pubkey = input.data.ok_or(anyhow::anyhow!("Invalid data"))?;
+                info!("Processing PublicAccountData input {}", index);
+                let pubkey = input.data.ok_or_else(|| {
+                    error!("Input {} missing pubkey data", index);
+                    anyhow::anyhow!("Invalid data")
+                })?;
                 if pubkey.len() != 32 {
+                    error!("Invalid pubkey length for input {}: {} (expected 32)", index, pubkey.len());
                     return Err(anyhow::anyhow!("Invalid pubkey"));
                 }
                 let pubkey = Pubkey::new_from_array(*array_ref!(pubkey, 0, 32));
+                info!("Spawning account data download task for input {} ({})", index, pubkey);
                 let rpc_client_clone = self.solana_rpc_client.clone();
                 task_set.spawn(download_public_account(
                     rpc_client_clone,
@@ -191,6 +224,7 @@ impl DefaultInputResolver {
                 }))
             }
             _ => {
+                error!("Unsupported input type for input {}: {:?}", index, input.input_type);
                 Err(anyhow::anyhow!("Invalid input type"))
             }
         }
@@ -214,17 +248,19 @@ impl InputResolver for DefaultInputResolver {
         &self,
         inputs: Vec<InputT>,
     ) -> Result<Vec<ProgramInput>, anyhow::Error> {
-        debug!("Starting to resolve {} public inputs", inputs.len());
+        let start = SystemTime::now();
+        info!("Starting public input resolution for {} inputs", inputs.len());
         debug!("Input types: {:?}", inputs.iter().map(|i| i.input_type).collect::<Vec<_>>());
         
         let mut url_set = JoinSet::new();
         let mut res = vec![ProgramInput::Empty; inputs.len()];
+        
         for (index, input) in inputs.into_iter().enumerate() {
-            trace!("Processing input {} of type {:?}", index, input.input_type);
+            debug!("Processing input {} of type {:?}", index, input.input_type);
             let client = self.http_client.clone();
             match self.par_resolve_input(client, index as u8, input, &mut url_set) {
                 Ok(program_input) => {
-                    debug!("Successfully resolved input {}: {:?}", index, program_input);
+                    info!("Successfully resolved input {}: {:?}", index, program_input);
                     res[index] = program_input;
                 }
                 Err(e) => {
@@ -235,22 +271,31 @@ impl InputResolver for DefaultInputResolver {
             }
         }
         
-        debug!("Waiting for {} downloads to complete", url_set.len());
+        info!("Waiting for {} downloads to complete", url_set.len());
         while let Some(url) = url_set.join_next().await {
             match url {
                 Ok(Ok(ri)) => {
                     let index = ri.index as usize;
-                    debug!("Successfully downloaded input {}", index);
-                    trace!("Download result: {:?}", ri);
+                    info!("Download complete for input {} after {:?}", 
+                        index,
+                        SystemTime::now().duration_since(start).unwrap_or_default()
+                    );
+                    info!("Input {} size: {} bytes", index, ri.data.len());
                     res[index] = ProgramInput::Resolved(ri);
                 }
                 e => {
-                    error!("Error downloading input: {:?}", e);
-                    return Err(anyhow::anyhow!("Error downloading input: {:?}", e));
+                    error!("Download failed for input: {:?}", e);
+                    error!("Time elapsed: {:?}", 
+                        SystemTime::now().duration_since(start).unwrap_or_default()
+                    );
+                    return Err(anyhow::anyhow!("Download failed: {:?}", e));
                 }
             }
         }
-        debug!("Completed resolving all public inputs");
+        
+        info!("All public inputs resolved in {:?}", 
+            SystemTime::now().duration_since(start).unwrap_or_default()
+        );
         Ok(res)
     }
 

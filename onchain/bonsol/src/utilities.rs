@@ -5,6 +5,7 @@ use solana_program::{
     program_memory::{sol_memcpy, sol_memset},
     rent::Rent,
     system_instruction,
+    msg,
 };
 
 use crate::error::ChannelError;
@@ -12,9 +13,20 @@ pub fn cleanup_execution_account(
     exec: &AccountInfo,
     requester: &AccountInfo,
     exit_code: u8,
+    input_digest: Option<&[u8]>,
 ) -> Result<(), ProgramError> {
-    exec.realloc(1, false)?;
-    sol_memset(&mut exec.data.borrow_mut(), exit_code, 1);
+    let size = if let Some(digest) = input_digest {
+        exec.realloc(33, false)?;  // 1 byte exit code + 32 bytes input digest
+        let mut data = exec.data.borrow_mut();
+        data[0] = exit_code;
+        data[1..].copy_from_slice(digest);
+        33
+    } else {
+        exec.realloc(1, false)?;
+        sol_memset(&mut exec.data.borrow_mut(), exit_code, 1);
+        1
+    };
+    msg!("Cleaned up execution account with {} bytes", size);
     refund(exec, requester)
 }
 

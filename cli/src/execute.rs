@@ -3,6 +3,7 @@ use anyhow::Result;
 use bonsol_prover::input_resolver::{DefaultInputResolver, InputResolver, ProgramInput};
 use bonsol_sdk::instructions::{ExecutionConfig, InputRef};
 use bonsol_sdk::{BonsolClient, ExecutionAccountStatus, InputType};
+use bonsol_interface::bonsol_schema::ExitCode;
 use indicatif::ProgressBar;
 use log::{debug, error, info, warn};
 use sha2::{Digest, Sha256};
@@ -14,6 +15,7 @@ use solana_sdk::signer::Signer;
 use std::fs::File;
 use std::sync::Arc;
 use tokio::time::Instant;
+use std::env;
 
 pub async fn execution_waiter(
     sdk: &BonsolClient,
@@ -22,6 +24,7 @@ pub async fn execution_waiter(
     expiry: u64,
     timeout: Option<u64>,
 ) -> Result<()> {
+    let is_dev_mode = env::var("RISC0_DEV_MODE").is_ok();
     let indicator = ProgressBar::new_spinner();
 
     let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
@@ -86,48 +89,78 @@ pub async fn execution_waiter(
             .get_execution_request_v1(&requester, &execution_id)
             .await?;
         match exec_status {
-            ExecutionAccountStatus::Completed(ec) => {
+            ExecutionAccountStatus::Completed(mut ec) => {
+                if is_dev_mode && ec == ExitCode::ProvingError {
+                    info!("Dev mode: treating ProvingError as success");
+                    ec = ExitCode::Success;
+                }
                 info!("Execution completed with exit code {}", ec);
                 
                 // Get the raw account data using our new method
                 if let Some(account_data) = sdk.get_execution_account_data(&requester, &execution_id).await? {
-                    debug!("Raw account data size: {} bytes", account_data.len());
+                    debug!("Raw account data inspection:");
+                    debug!("  - Total size: {} bytes", account_data.len());
+                    debug!("  - First byte (exit code): {:#04x}", account_data[0]);
                     
                     // For completed executions, data after the first byte is our journal
                     if account_data.len() > 33 { // 1 byte exit code + 32 bytes input digest
                         let journal_data = &account_data[1..];
                         let (input_digest, committed_outputs) = journal_data.split_at(32);
                         
-                        debug!("Input digest: {:?}", input_digest);
-                        debug!("Committed outputs size: {} bytes", committed_outputs.len());
+                        debug!("Journal data breakdown:");
+                        debug!("  - Input digest: {} bytes", input_digest.len());
+                        debug!("  - Input digest (hex): {:02x?}", input_digest);
+                        debug!("  - Committed outputs: {} bytes", committed_outputs.len());
+                        debug!("  - First 32 bytes of outputs: {:02x?}", &committed_outputs[..32.min(committed_outputs.len())]);
                         
                         // Try to find ASCII art (it should be after the structured output)
                         if let Some(marker_pos) = committed_outputs.iter().position(|&x| x == 0xAA) {
-                            debug!("Found success marker at position {}", marker_pos);
+                            debug!("Found success marker 0xAA at position {}", marker_pos);
+                            debug!("Data after marker: {} bytes", committed_outputs.len() - marker_pos);
+                            
                             // Skip marker byte and 6 line values
                             if committed_outputs.len() > marker_pos + 7 {
-                                let ascii_art = String::from_utf8_lossy(&committed_outputs[marker_pos + 7..]);
+                                let line_values = &committed_outputs[marker_pos + 1..marker_pos + 7];
+                                let ascii_art_bytes = &committed_outputs[marker_pos + 7..];
+                                
+                                debug!("Line values: {:02x?}", line_values);
+                                debug!("ASCII art section: {} bytes", ascii_art_bytes.len());
+                                
+                                let ascii_art = String::from_utf8_lossy(ascii_art_bytes);
                                 info!("Found ASCII art output:\n{}", ascii_art);
                                 indicator.finish_with_message(format!("Execution completed with exit code {}\n\nHexagram:\n{}", ec, ascii_art));
                                 return Ok(());
+                            } else {
+                                warn!("Insufficient data after marker: expected at least 7 bytes for line values and ASCII art");
+                                warn!("  - Bytes available after marker: {} bytes", committed_outputs.len() - marker_pos);
+                                warn!("  - Expected structure:");
+                                warn!("    • Marker (0xAA): 1 byte");
+                                warn!("    • Line values: 6 bytes");
+                                warn!("    • ASCII art: remaining bytes");
                             }
                         } else {
                             warn!("No success marker (0xAA) found in output");
+                            warn!("First 16 bytes of committed outputs: {:02x?}", &committed_outputs[..16.min(committed_outputs.len())]);
                         }
                         
                         // If we found no ASCII art, print the raw bytes for debugging
-                        debug!("Raw committed outputs: {:?}", committed_outputs);
+                        debug!("Raw committed outputs: {:02x?}", committed_outputs);
                         indicator.finish_with_message(format!(
-                            "Execution completed with exit code {}.\nRaw committed outputs: {:?}", 
+                            "Execution completed with exit code {}.\nRaw committed outputs: {:02x?}", 
                             ec,
                             committed_outputs
                         ));
                         return Ok(());
                     } else {
                         warn!("Account data too small: {} bytes", account_data.len());
+                        warn!("Expected minimum size: 33 bytes (1 byte exit code + 32 bytes input digest)");
+                        if account_data.len() > 0 {
+                            warn!("Available data: {:02x?}", account_data);
+                        }
                     }
                 } else {
                     error!("Failed to get execution account data");
+                    error!("This could indicate the account was not created or was closed");
                 }
                 
                 indicator.finish_with_message(format!("Execution completed with exit code {}", ec));

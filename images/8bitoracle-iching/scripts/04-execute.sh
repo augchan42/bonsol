@@ -76,6 +76,10 @@ fi
 echo "Successfully extracted image ID: $BONSOL_IMAGE_ID"
 echo "----------------------------------------"
 
+# Always enable RISC0_DEV_MODE for development/testing
+export RISC0_DEV_MODE=1
+echo "RISC0_DEV_MODE enabled for development/testing"
+
 # Enable debug logging if --debug flag is passed
 if [ "$DEBUG" = true ]; then
     echo "Debug mode enabled"
@@ -83,10 +87,8 @@ if [ "$DEBUG" = true ]; then
     # Add more detailed Solana program logging
     export RUST_LOG="risc0_zkvm=debug,bonsol_prover::input_resolver=debug,solana_program::log=debug,bonsol=info,solana_program=debug,risc0_zkvm::guest=debug,solana_runtime::message_processor=trace,solana_program_runtime=debug,solana_runtime=debug"
     export RUST_BACKTRACE=full
-    export RISC0_DEV_MODE=1
     # Increase compute budget for more detailed logging
     echo "RUST_LOG set to: $RUST_LOG"
-    echo "RISC0_DEV_MODE enabled"
     echo "Full backtraces enabled"
 fi
 
@@ -241,9 +243,9 @@ echo "- Timestamp: $TIMESTAMP"
 # Note: We don't need to create PDAs manually - they are created on-chain
 # during the first instruction that uses them. Just verify our configuration:
 echo "Verifying account configuration..."
-echo "- Execution PDA (account[1]): $(jq -r '.callbackConfig.extraAccounts[1].pubkey' "$INPUT_PATH")"
-echo "- Hexagram PDA (account[2]): $(jq -r '.callbackConfig.extraAccounts[2].pubkey' "$INPUT_PATH")"
-echo "- System Program (account[3]): $(jq -r '.callbackConfig.extraAccounts[3].pubkey' "$INPUT_PATH")"
+echo "- Execution PDA (account[0]): $(jq -r '.callbackConfig.extraAccounts[0].pubkey' "$INPUT_PATH")"
+echo "- Hexagram PDA (account[1]): $(jq -r '.callbackConfig.extraAccounts[1].pubkey' "$INPUT_PATH")"
+echo "- System Program (account[2]): $(jq -r '.callbackConfig.extraAccounts[2].pubkey' "$INPUT_PATH")"
 
 echo "Account configuration verified ✓"
 echo "----------------------------------------"

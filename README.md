@@ -13,6 +13,25 @@ Do not use `node_keypair.json` in production, it is for local development only.
 * Flat buffers 24.3.25
 * For running the prover x86_64-linux due to (stark to snark tooling)[https://github.com/risc0/risc0/commit/7c6101f925e8fd1b3de09654941f0608d4459a2b]
 
+## Development vs Production Mode
+
+### RISC0_DEV_MODE Behavior
+The `RISC0_DEV_MODE` environment variable is a **compile-time** flag that affects how the Bonsol smart contract handles proof verification:
+
+- When set during compilation:
+  ```bash
+  RISC0_DEV_MODE=1 cargo build-sbf  # Dev mode enabled
+  ```
+  The resulting program will always run in dev mode, skipping cryptographic verification.
+
+- When not set during compilation:
+  ```bash
+  cargo build-sbf  # Production mode
+  ```
+  The resulting program will always require valid proofs.
+
+**IMPORTANT**: Setting `RISC0_DEV_MODE=1` on the validator after deployment has no effect. The mode is determined at compile time and cannot be changed without recompiling and redeploying the program.
+
 ## Scripts and Configuration
 
 ### Running a Node (`bin/run-node.sh`)

@@ -1,4 +1,5 @@
 use crate::types::LineValue;
+use risc0_zkvm::guest::env;
 
 /// Generate a line value using the exact probabilities:
 /// - Young Yang (7): 5/16
@@ -8,15 +9,22 @@ use crate::types::LineValue;
 pub fn generate_line_value(random_bytes: &[u8]) -> LineValue {
     // Use first byte for randomness (0-255)
     let value = random_bytes[0];
+    env::log(&format!("Generating line value from byte: {:#04x} ({})", value, value));
     
     // Map 0-255 to our 16 probability units
     // Each unit represents 1/16 probability (256/16 = 16 values per unit)
-    match value / 16 {
+    let unit = value / 16;
+    env::log(&format!("Probability unit: {} (range 0-15)", unit));
+    
+    let line = match unit {
         0 => LineValue::OldYin,                    // 1/16
         1..=3 => LineValue::OldYang,               // 3/16
         4..=10 => LineValue::YoungYin,             // 7/16
         _ => LineValue::YoungYang,                 // 5/16 (remaining)
-    }
+    };
+    
+    env::log(&format!("Generated line value: {:?} (value: {})", line, line as u8));
+    line
 }
 
 #[cfg(test)]

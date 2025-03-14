@@ -1,9 +1,9 @@
 use std::ops::Neg;
-use std::env;
+use solana_program::msg;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate};
 use groth16_solana::groth16::{Groth16Verifier, Groth16Verifyingkey};
-use solana_program::{hash::hashv, msg};
+use solana_program::{hash::hashv};
 
 use crate::{
     error::ChannelError,

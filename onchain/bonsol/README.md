@@ -27,9 +27,31 @@ In Solana, smart contracts are called "programs". This program is responsible fo
 ## Development Mode
 
 The program supports a development mode for faster testing:
-- Enabled by setting `RISC0_DEV_MODE=1` environment variable
+- Set by `RISC0_DEV_MODE` environment variable during compilation
+- **IMPORTANT**: This is a compile-time flag, not a runtime flag
+- Once compiled and deployed, the dev mode setting cannot be changed by setting environment variables on the validator
 - Skips cryptographic verification in dev mode
 - Logs detailed verification steps for debugging
+
+### Dev vs Production Builds
+
+1. Development Build:
+```bash
+# Compile with dev mode enabled
+RISC0_DEV_MODE=1 cargo build-sbf
+
+# The resulting program will always run in dev mode,
+# regardless of environment variables on the validator
+```
+
+2. Production Build:
+```bash
+# Compile without dev mode (production)
+cargo build-sbf
+
+# The resulting program will never run in dev mode,
+# regardless of environment variables on the validator
+```
 
 ## Building
 

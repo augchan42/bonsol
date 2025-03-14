@@ -119,7 +119,7 @@ pub fn process_claim_v1<'a>(
     let current_block = solana_program::clock::Clock::get()?.slot;
     let ca = ClaimAccounts::from_instruction(accounts, &cl, current_block)?;
     if ca.expired {
-        cleanup_execution_account(ca.exec, ca.claimer, ChannelError::ExecutionExpired as u8)?;
+        cleanup_execution_account(ca.exec, ca.claimer, ChannelError::ExecutionExpired as u8, None)?;
         msg!("Execution expired");
         return Ok(());
     }
