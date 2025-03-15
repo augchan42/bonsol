@@ -167,65 +167,75 @@ echo "  RUST_LOG: $RUST_LOG"
 echo "  RUST_BACKTRACE: $RUST_BACKTRACE"
 echo "  Debug mode: $DEBUG"
 
-# Store original directory
+# Store original directory and find project root
 ORIGINAL_DIR=$(pwd)
+PROJECT_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+echo "Project root directory: $PROJECT_ROOT"
 
-# Step 0: Rebuild bonsol if requested
+# Step 1: Always build onchain programs
+echo "Step 1: Building onchain programs..."
+if [ "$DEBUG" = true ]; then
+    # First build the Solana smart contract program with dev mode and logging
+    echo "Debug: Building Solana program with dev mode..."
+    cd "$PROJECT_ROOT/onchain/bonsol"
+    RUST_LOG="debug,solana_program::log=debug,bonsol=debug" \
+        RUST_BACKTRACE=1 \
+        RISC0_DEV_MODE=1 \
+        cargo build-sbf --verbose
+    
+    # Build the callback example program
+    echo "Debug: Building callback example program..."
+    cd "$PROJECT_ROOT/onchain/example-program-on-bonsol"
+    RUST_LOG="debug,solana_program::log=debug" \
+        RUST_BACKTRACE=1 \
+        cargo build-sbf --verbose
+    
+    # Build the 8BitOracle I Ching callback program
+    echo "Debug: Building 8BitOracle I Ching callback program..."
+    cd "$PROJECT_ROOT/onchain/8bitoracle-iching-callback"
+    RUST_LOG="debug,solana_program::log=debug" \
+        RUST_BACKTRACE=1 \
+        cargo build-sbf --verbose
+else
+    cd "$PROJECT_ROOT/onchain/bonsol"
+    cargo build-sbf
+    cd "$PROJECT_ROOT/onchain/example-program-on-bonsol"
+    cargo build-sbf
+    cd "$PROJECT_ROOT/onchain/8bitoracle-iching-callback"
+    cargo build-sbf
+fi
+echo "Onchain programs build complete"
+echo
+
+# Step 2: Optionally rebuild entire workspace
 if [ "$REBUILD_BONSOL" = true ]; then
-    echo "Step 0: Rebuilding bonsol node software..."
+    echo "Step 2: Rebuilding entire bonsol workspace..."
+    cd "$PROJECT_ROOT"
     if [ "$DEBUG" = true ]; then
-        echo "Debug: Building bonsol in directory: $ORIGINAL_DIR"
+        echo "Debug: Building workspace in directory: $(pwd)"
         echo "Debug: Cleaning previous build..."
         cargo clean
 
-        # First build the Solana smart contract program with dev mode and logging
-        echo "Debug: Building Solana program with dev mode..."
-        cd onchain/bonsol
-        RUST_LOG="debug,solana_program::log=debug,bonsol=debug" \
-            RUST_BACKTRACE=1 \
-            RISC0_DEV_MODE=1 \
-            cargo build-sbf --verbose
-        cd ../..
-
-        # Build the callback example program
-        echo "Debug: Building callback example program..."
-        cd onchain/example-program-on-bonsol
-        RUST_LOG="debug,solana_program::log=debug" \
-            RUST_BACKTRACE=1 \
-            cargo build-sbf --verbose
-        cd ../..
-
-        # Build the 8BitOracle I Ching callback program
-        echo "Debug: Building 8BitOracle I Ching callback program..."
-        cd onchain/8bitoracle-iching-callback
-        RUST_LOG="debug,solana_program::log=debug" \
-            RUST_BACKTRACE=1 \
-            cargo build-sbf --verbose
-        cd ../..
-
-        echo "Debug: Building rest of bonsol with dev mode..."
+        echo "Debug: Building workspace with dev mode..."
         RUST_LOG="debug,bonsol=debug,risc0_runner=debug,solana_program::log=debug" \
             RUST_BACKTRACE=1 \
             RISC0_DEV_MODE=1 \
-            cargo build --verbose
+            cargo build --verbose --workspace
     else
-        cargo build
+        cargo build --workspace
     fi
-    echo "Bonsol rebuild complete"
+    echo "Bonsol workspace rebuild complete"
     echo
-
-    # Build the 8BitOracle I Ching callback program
-    echo "Building 8BitOracle I Ching callback program..."
-    cd onchain/8bitoracle-iching-callback
-    cargo build-sbf
-    cd ../..
 fi
 
-echo "Step 1: Building Rust program..."
+# Step 3: Build I Ching program
+echo "Step 3: Building I Ching program..."
+cd "$PROJECT_ROOT/images/8bitoracle-iching"
 if [ "$DEBUG" = true ]; then
     echo "Debug: Build Configuration:"
     echo "  Current directory: $(pwd)"
     echo "  Original directory: $ORIGINAL_DIR"
+    echo "  Project root: $PROJECT_ROOT"
     echo "  Environment:"
     echo "    RUST_LOG=$RUST_LOG"
     echo "    RUST_BACKTRACE=$RUST_BACKTRACE"
@@ -233,78 +243,35 @@ if [ "$DEBUG" = true ]; then
     echo "    BONSOL_HOME=$BONSOL_HOME"
 fi
 
-echo "Changing to I Ching program directory..."
-cd "$(dirname "$0")/.." # Change to iching program directory (up one level from scripts)
-if [ "$DEBUG" = true ]; then
-    echo "Debug: Changed to directory: $(pwd)"
-    echo "Debug: Contents of current directory:"
-    ls -la
-    echo "Debug: Cargo.toml contents:"
-    cat Cargo.toml
-fi
-
-echo "Running cargo build..."
+echo "Building I Ching program..."
 if [ "$DEBUG" = true ]; then
     echo "Debug: Running cargo with verbose output and features: $CARGO_FLAGS"
     cargo build --verbose $CARGO_FLAGS
 else
-    cargo build
+    cargo build $CARGO_FLAGS
 fi
 
-echo
-echo "Step 2: Building ZK program..."
-echo "Changing back to project root..."
-cd "$ORIGINAL_DIR" # Return to original directory for bonsol build
-if [ "$DEBUG" = true ]; then
-    echo "Debug: Changed back to directory: $(pwd)"
-fi
+# Run bonsol build to generate manifest.json
+# Architecture Notes:
+# This project uses a split architecture:
+# 1. ZK Program (RISC0)
+#    - Runs computation off-chain and generates proofs
+#    - Uses STARK/SNARK system (exact performance implications unclear)
+#    - Deployed to S3 for prover nodes to access
+# 2. Solana Callback Program
+#    - On-chain program that receives and processes proofs
+#    - Handles storage of results
+# Note: The tradeoffs and limitations of this approach (especially around
+# ZK circuit complexity and proving time) would need careful benchmarking
+# to fully understand.
 
-# Determine which bonsol to use
-if [ "$USE_LOCAL" = true ]; then
-    if [ -f "${BONSOL_HOME}/target/debug/bonsol" ]; then
-        BONSOL_CMD="${BONSOL_HOME}/target/debug/bonsol"
-        echo "Using local bonsol build: $BONSOL_CMD"
-        if [ "$DEBUG" = true ]; then
-            echo "Debug: Bonsol binary details:"
-            ls -l "$BONSOL_CMD"
-            echo "Debug: Bonsol binary last modified:"
-            stat "$BONSOL_CMD"
-        fi
-    else
-        echo "Error: Local bonsol build not found at ${BONSOL_HOME}/target/debug/bonsol"
-        echo "Please build bonsol locally first using 'cargo build'"
-        exit 1
-    fi
-else
-    BONSOL_CMD="bonsol"
-    echo "Using installed bonsol from PATH"
-    if [ "$DEBUG" = true ]; then
-        echo "Debug: Bonsol path:"
-        which bonsol
-    fi
-fi
+# Building ZK program and generating manifest.json...
+echo "Running bonsol build to generate manifest.json..."
+bonsol build --zk-program-path .
 
-if [ "$DEBUG" = true ]; then
-    echo "Debug: ZK Program Configuration:"
-    echo "  Program path: images/8bitoracle-iching"
-    echo "  Bonsol command: $BONSOL_CMD"
-    echo "  RISC0_DEV_MODE: $RISC0_DEV_MODE"
-    if [ -f "images/8bitoracle-iching/manifest.json" ]; then
-        echo "Debug: Current manifest contents:"
-        cat images/8bitoracle-iching/manifest.json
-    fi
-fi
-
-echo "Running bonsol build..."
-if [ "$DEBUG" = true ]; then
-    echo "Debug: Running bonsol build command: $BONSOL_CMD build --zk-program-path images/8bitoracle-iching"
-    # Clean the ZK program build to ensure rebuild with dev mode
-    rm -rf images/8bitoracle-iching/target
-    "$BONSOL_CMD" build --zk-program-path images/8bitoracle-iching
-    echo "Debug: Build command completed"
-else
-    "$BONSOL_CMD" build --zk-program-path images/8bitoracle-iching
-fi
+# Return to original directory
+cd "$ORIGINAL_DIR"
+echo "Build process complete!"
 
 echo
 echo "Build complete! You can now run 02-deploy.sh to deploy the program."

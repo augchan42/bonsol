@@ -309,6 +309,7 @@ pub async fn execute(
     };
     
     let current_block = sdk.get_current_slot().await?;
+    info!("execution expiry: {}", expiry);
     let expiry = expiry + current_block;
     info!("Current block: {}, execution expiry: {}", current_block, expiry);
     

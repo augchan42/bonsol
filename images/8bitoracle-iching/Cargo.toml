@@ -7,7 +7,7 @@ publish = false   # Exclude local crates from licensing checks
 [workspace]
 
 [package.metadata.zkprogram]
-input_order = ["Private"]  # Random seed is private input
+input_order = ["Public"]  # Random seed is public input
 
 [dependencies]
 risc0-zkvm = { git = "https://github.com/anagrambuild/risc0", branch = "v1.0.1-bonsai-fix", default-features = false, features = [

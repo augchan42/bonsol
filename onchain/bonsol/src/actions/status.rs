@@ -44,17 +44,40 @@ impl<'a, 'b> StatusAccounts<'a, 'b> {
         accounts: &'a [AccountInfo<'a>],
         data: &'b StatusV1<'b>,
     ) -> Result<Self, ChannelError> {
+        msg!("Starting account validation");
+        
+        if accounts.len() < 4 {
+            msg!("Not enough accounts provided. Expected at least 4, got {}", accounts.len());
+            return Err(ChannelError::InvalidExecutionAccount);
+        }
+        
         let ea = &accounts[1];
         let prover = &accounts[3];
         let callback_program = &accounts[2];
-        let eid = data
-            .execution_id()
-            .ok_or(ChannelError::InvalidExecutionAccount)?;
+        
+        msg!("Extracting execution ID");
+        let eid = match data.execution_id() {
+            Some(id) => {
+                msg!("Found execution ID: {}", id);
+                id
+            },
+            None => {
+                msg!("Missing execution ID in status data");
+                return Err(ChannelError::InvalidExecutionAccount);
+            }
+        };
+        
+        msg!("Checking PDA derivation");
+        msg!("Requester key: {}", accounts[0].key);
+        msg!("Execution account key: {}", ea.key);
+        
         let bmp = Some(check_pda(
             &execution_address_seeds(accounts[0].key, eid.as_bytes()),
             ea.key,
             ChannelError::InvalidExecutionAccount,
         )?);
+        msg!("PDA check passed with bump: {:?}", bmp);
+        
         let stat = StatusAccounts {
             requester: &accounts[0],
             exec: &accounts[1],
@@ -64,6 +87,7 @@ impl<'a, 'b> StatusAccounts<'a, 'b> {
             exec_bump: bmp,
             eid,
         };
+        msg!("Successfully created StatusAccounts");
         Ok(stat)
     }
 }
@@ -72,14 +96,51 @@ pub fn process_status_v1<'a>(
     accounts: &'a [AccountInfo<'a>],
     ix: ChannelInstruction,
 ) -> Result<(), ProgramError> {
+    msg!("Starting status processing");
+    
+    // 1. Parse status instruction
+    msg!("Parsing status instruction");
     let st = ix.status_v1_nested_flatbuffer();
     if st.is_none() {
+        msg!("Failed to parse status instruction - invalid flatbuffer");
         return Err(ChannelError::InvalidInstruction.into());
     }
     let st = st.unwrap();
-    let sa = StatusAccounts::from_instruction(accounts, &st)?;
+    msg!("Successfully parsed status instruction");
+
+    // 2. Parse and validate accounts
+    msg!("Parsing and validating accounts");
+    msg!("Number of accounts provided: {}", accounts.len());
+    for (i, acc) in accounts.iter().enumerate() {
+        msg!("Account {}: {}", i, acc.key);
+    }
+    
+    let sa = match StatusAccounts::from_instruction(accounts, &st) {
+        Ok(sa) => {
+            msg!("Successfully validated accounts");
+            sa
+        },
+        Err(e) => {
+            msg!("Failed to validate accounts: {:?}", e);
+            return Err(e.into());
+        }
+    };
+
+    // 3. Read execution request data
+    msg!("Reading execution request data");
     let er_ref = sa.exec.try_borrow_data()?;
-    let er = root_as_execution_request_v1(&er_ref).map_err(|_| ChannelError::InvalidExecutionAccount)?;
+    msg!("Successfully borrowed execution data, length: {}", er_ref.len());
+    
+    let er = match root_as_execution_request_v1(&er_ref) {
+        Ok(er) => {
+            msg!("Successfully parsed execution request");
+            er
+        },
+        Err(_) => {
+            msg!("Failed to parse execution request data");
+            return Err(ChannelError::InvalidExecutionAccount.into());
+        }
+    };
 
     // Extract all needed values from er before dropping er_ref
     let callback_program_set = sol_memcmp(sa.callback_program.key.as_ref(), crate::ID.as_ref(), 32) != 0;
@@ -125,7 +186,26 @@ pub fn process_status_v1<'a>(
     }
 
     // Check expiry using the stored max_block_height
-    if max_block_height < Clock::get()?.slot {
+    let current_slot = Clock::get()?.slot;
+    msg!(
+        "Checking expiry for execution {}: Current slot: {}, Max block height: {}, Blocks remaining: {}",
+        sa.eid,
+        current_slot,
+        max_block_height,
+        if max_block_height > current_slot {
+            max_block_height - current_slot
+        } else {
+            0
+        }
+    );
+
+    if current_slot > max_block_height {
+        msg!(
+            "Execution {} expired: Current slot {} is greater than max block height {}",
+            sa.eid,
+            current_slot,
+            max_block_height
+        );
         return Err(ChannelError::ExecutionExpired.into());
     }
 

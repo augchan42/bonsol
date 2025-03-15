@@ -1,41 +1,97 @@
 #!/bin/bash
 
-# Exit on error
+# Exit on error and enable debug tracing
 set -e
+set -x  # Add debug tracing
+
+# Function to check if a command exists
+check_dependency() {
+    if ! command -v "$1" &>/dev/null; then
+        echo "Error: $1 is required but not installed."
+        echo "Please install $1 first"
+        exit 1
+    fi
+}
+
+# Function to check and install npm dependencies
+check_npm_deps() {
+    local dir="$1"
+    if [ ! -d "$dir/node_modules" ]; then
+        echo "Installing npm dependencies in $dir..."
+        cd "$dir"
+        npm install
+        npm install --save-dev @types/node
+        cd - > /dev/null
+    fi
+}
+
+# Check required dependencies
+echo "Checking dependencies..."
+REQUIRED_DEPS=("ts-node" "jq" "openssl" "solana-keygen" "solana" "npm")
+for dep in "${REQUIRED_DEPS[@]}"; do
+    check_dependency "$dep"
+done
+echo "✓ All dependencies found"
+
+# Store original directory
+ORIGINAL_DIR=$(pwd)
 
 # Debug: Print current directory and script location
-echo "Current directory: $(pwd)"
+echo "Current directory: $ORIGINAL_DIR"
 echo "Script location: $0"
 
 # Get project root directory (3 levels up from script location)
 PROJECT_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+echo "Project root: $PROJECT_ROOT"
 
 # Source environment variables
 ENV_FILE="$(dirname "$0")/../.env"
 if [ -f "$ENV_FILE" ]; then
-  echo "Loading environment variables from $ENV_FILE"
-  set -a
-  source "$ENV_FILE"
-  set +a
+    echo "Loading environment variables from $ENV_FILE"
+    set -a
+    source "$ENV_FILE"
+    set +a
 else
-  echo "Warning: .env file not found at $ENV_FILE"
+    echo "Warning: .env file not found at $ENV_FILE"
 fi
 
-# Get the image ID from manifest.json
+# Get the image ID from manifest.json using jq
 MANIFEST_FILE="$(dirname "$0")/../manifest.json"
-IMAGE_ID=$(grep -o '"imageId": "[^"]*' "$MANIFEST_FILE" | cut -d'"' -f4)
-if [ -z "$IMAGE_ID" ]; then
-  echo "Error: Could not find image ID in manifest.json"
-  exit 1
+if [ ! -f "$MANIFEST_FILE" ]; then
+    echo "Error: manifest.json not found at $MANIFEST_FILE"
+    exit 1
+fi
+
+IMAGE_ID=$(jq -r '.imageId' "$MANIFEST_FILE")
+if [ -z "$IMAGE_ID" ] || [ "$IMAGE_ID" = "null" ]; then
+    echo "Error: Could not find image ID in manifest.json"
+    exit 1
 fi
 echo "Found image ID: $IMAGE_ID"
 
 # Get the program ID from the keypair file
 KEYPAIR_FILE="$PROJECT_ROOT/onchain/8bitoracle-iching-callback/scripts/program-keypair.json"
+
+# Check if keypair file exists, if not create it
+if [ ! -f "$KEYPAIR_FILE" ]; then
+    echo "Program keypair not found at $KEYPAIR_FILE"
+    echo "Generating new program keypair..."
+    
+    # Ensure directory exists
+    mkdir -p "$(dirname "$KEYPAIR_FILE")"
+    
+    # Generate new keypair without a passphrase
+    solana-keygen new --no-bip39-passphrase -o "$KEYPAIR_FILE"
+    
+    echo "Generated new program keypair at: $KEYPAIR_FILE"
+    echo "⚠️  Important: You will need to deploy the program using this keypair"
+    echo "   Run the deploy script after this completes"
+fi
+
 CALLBACK_PROGRAM_ID=$(solana-keygen pubkey "$KEYPAIR_FILE")
 if [ -z "$CALLBACK_PROGRAM_ID" ]; then
-  echo "Error: Could not get program ID from keypair file"
-  exit 1
+    echo "Error: Could not get program ID from keypair file"
+    exit 1
 fi
 echo "Found program ID: $CALLBACK_PROGRAM_ID"
 
@@ -54,9 +110,6 @@ if [ -z "$REQUESTER" ]; then
 fi
 echo "Using requester: $REQUESTER"
 
-# Set this keypair as the default for Solana
-solana config set --keypair "$EXECUTION_KEYPAIR"
-
 # Generate a random execution ID
 EXECUTION_ID=$(openssl rand -hex 16)
 echo "Generated execution ID: $EXECUTION_ID"
@@ -73,29 +126,51 @@ echo "  Bonsol Program ID: $BONSOL_PROGRAM_ID"
 echo "  Execution ID: $EXECUTION_ID"
 
 PDA_SCRIPT="$PROJECT_ROOT/onchain/8bitoracle-iching-callback/scripts/derive-pda.ts"
-cd "$PROJECT_ROOT/onchain/8bitoracle-iching-callback/scripts"
-PDA_INFO=$(ts-node derive-pda.ts "$CALLBACK_PROGRAM_ID" "$REQUESTER" "$BONSOL_PROGRAM_ID" "$EXECUTION_ID" 2>&1)
-DERIVE_EXIT=$?
-cd - >/dev/null
-
-# Print full PDA derivation output for debugging
-echo "PDA derivation output:"
-echo "$PDA_INFO"
-
-if [ $DERIVE_EXIT -ne 0 ]; then
-  echo "Error: PDA derivation failed"
-  exit 1
+if [ ! -f "$PDA_SCRIPT" ]; then
+    echo "Error: PDA derivation script not found at $PDA_SCRIPT"
+    exit 1
 fi
 
-# Extract both PDAs from the output (now one per line)
-EXECUTION_PDA=$(echo "$PDA_INFO" | grep -A1 "Final Results" | grep "Execution PDA:" | cut -d' ' -f3)
-HEXAGRAM_PDA=$(echo "$PDA_INFO" | grep -A2 "Final Results" | grep "Hexagram PDA:" | cut -d' ' -f3)
+# Before running ts-node, ensure dependencies are installed
+SCRIPTS_DIR="$PROJECT_ROOT/onchain/8bitoracle-iching-callback/scripts"
+check_npm_deps "$SCRIPTS_DIR"
 
-if [ -z "$EXECUTION_PDA" ] || [ -z "$HEXAGRAM_PDA" ]; then
-  echo "Error: Could not derive PDAs"
-  echo "PDA script output:"
-  echo "$PDA_INFO"
-  exit 1
+# Change to scripts directory for ts-node
+cd "$SCRIPTS_DIR"
+
+# Run ts-node and capture stdout and stderr separately
+PDA_INFO_ERR=$(ts-node derive-pda.ts "$CALLBACK_PROGRAM_ID" "$REQUESTER" "$BONSOL_PROGRAM_ID" "$EXECUTION_ID" 2>&1 >/dev/null)
+PDA_INFO=$(ts-node derive-pda.ts "$CALLBACK_PROGRAM_ID" "$REQUESTER" "$BONSOL_PROGRAM_ID" "$EXECUTION_ID" 2>/dev/null)
+DERIVE_EXIT=$?
+
+# Return to original directory
+cd "$ORIGINAL_DIR"
+
+# Print debug output
+echo "PDA derivation debug output:"
+echo "$PDA_INFO_ERR"
+
+if [ $DERIVE_EXIT -ne 0 ]; then
+    echo "Error: PDA derivation failed"
+    echo "Full error output:"
+    echo "$PDA_INFO_ERR"
+    exit 1
+fi
+
+# Extract PDAs from stdout (which has just the two lines we need)
+EXECUTION_PDA=$(echo "$PDA_INFO" | head -n1)
+HEXAGRAM_PDA=$(echo "$PDA_INFO" | tail -n1)
+
+# Validate PDA format (should be base58 encoded, 32-44 characters)
+PDA_REGEX='^[1-9A-HJ-NP-Za-km-z]{32,44}$'
+if [ -z "$EXECUTION_PDA" ] || [ -z "$HEXAGRAM_PDA" ] || \
+   ! [[ $EXECUTION_PDA =~ $PDA_REGEX ]] || \
+   ! [[ $HEXAGRAM_PDA =~ $PDA_REGEX ]]; then
+    echo "Error: Invalid PDA format"
+    echo "Execution PDA: $EXECUTION_PDA"
+    echo "Hexagram PDA: $HEXAGRAM_PDA"
+    echo "PDAs should be base58 encoded and 32-44 characters long"
+    exit 1
 fi
 
 echo "Derived PDAs:"
@@ -110,6 +185,55 @@ echo "Generated random seed: 0x$RANDOM_SEED"
 TIMESTAMP=$(date +%s)
 echo "Generated timestamp: $TIMESTAMP"
 
+# Get current block height and calculate expiry
+echo "Checking current slot and calculating expiry..."
+CURRENT_SLOT=$(solana slot)
+if [ -z "$CURRENT_SLOT" ]; then
+    echo "Error: Could not get current slot"
+    exit 1
+fi
+
+# Validate that slot is reasonable
+if [ "$CURRENT_SLOT" -lt 1 ]; then
+    echo "Error: Current slot ($CURRENT_SLOT) is invalid"
+    exit 1
+fi
+
+# Calculate expiry with a minimum window
+MIN_EXPIRY_WINDOW=1000
+EXPIRY_WINDOW=1000000
+
+# Add buffer to account for potential slot changes
+BUFFER_BLOCKS=100
+EXPIRY_WINDOW=$((EXPIRY_WINDOW + BUFFER_BLOCKS))
+
+echo "Expiry calculation:"
+echo "  Current slot: $CURRENT_SLOT"
+echo "  Minimum expiry window: $MIN_EXPIRY_WINDOW"
+echo "  Buffer blocks: $BUFFER_BLOCKS"
+echo "  Desired expiry window: $EXPIRY_WINDOW"
+
+# Ensure expiry window is at least the minimum
+if [ "$EXPIRY_WINDOW" -lt "$MIN_EXPIRY_WINDOW" ]; then
+    echo "Warning: Expiry window is less than minimum, using minimum value"
+    EXPIRY_WINDOW=$MIN_EXPIRY_WINDOW
+fi
+
+MAX_BLOCK_HEIGHT=$((CURRENT_SLOT + EXPIRY_WINDOW))
+
+echo "Final expiry configuration:"
+echo "  Current slot: $CURRENT_SLOT"
+echo "  Expiry window: $EXPIRY_WINDOW blocks"
+echo "  Max block height: $MAX_BLOCK_HEIGHT"
+echo "  Time until expiry: ~$((EXPIRY_WINDOW / 2)) seconds (assuming 2 slots/sec)"
+
+# Validate the calculated max block height
+if [ "$MAX_BLOCK_HEIGHT" -le "$CURRENT_SLOT" ]; then
+    echo "Error: Invalid max block height calculation"
+    echo "Max block height ($MAX_BLOCK_HEIGHT) must be greater than current slot ($CURRENT_SLOT)"
+    exit 1
+fi
+
 # Generate a random storage account keypair
 STORAGE_KEYPAIR="$PROJECT_ROOT/onchain/8bitoracle-iching-callback/scripts/storage-keypair.json"
 if [ ! -f "$STORAGE_KEYPAIR" ]; then
@@ -123,6 +247,14 @@ if [ -z "$STORAGE_PUBKEY" ]; then
   exit 1
 fi
 echo "Using storage account: $STORAGE_PUBKEY"
+
+# Get the prover account (using the Bonsol program ID)
+PROVER_PUBKEY="$BONSOL_PROGRAM_ID"
+if [ -z "$PROVER_PUBKEY" ]; then
+  echo "Error: Could not get prover public key"
+  exit 1
+fi
+echo "Using prover account: $PROVER_PUBKEY"
 
 # Create input.json with callback configuration
 INPUT_FILE="$PROJECT_ROOT/images/8bitoracle-iching/input.json"
@@ -144,6 +276,8 @@ jq -n \
   --arg executionPda "$EXECUTION_PDA" \
   --arg hexagramPda "$HEXAGRAM_PDA" \
   --arg storagePubkey "$STORAGE_PUBKEY" \
+  --arg proverPubkey "$PROVER_PUBKEY" \
+  --arg maxBlockHeight "$MAX_BLOCK_HEIGHT" \
   '{
     "timestamp": ($timestamp | tonumber),
     "imageId": $imageId,
@@ -159,7 +293,7 @@ jq -n \
       }
     ],
     "tip": 12000,
-    "expiry": 1000,
+    "expiry": ($maxBlockHeight | tonumber),
     "preInstructions": [
       {
         "programId": "ComputeBudget111111111111111111111111111111",
@@ -205,6 +339,11 @@ jq -n \
           "isWritable": true
         },
         {
+          "pubkey": $proverPubkey,
+          "isSigner": false,
+          "isWritable": false
+        },
+        {
           "pubkey": "11111111111111111111111111111111",
           "isSigner": false,
           "isWritable": false
@@ -222,4 +361,23 @@ echo "  Execution ID: $EXECUTION_ID"
 echo "  Execution PDA: $EXECUTION_PDA"
 echo "  Hexagram PDA: $HEXAGRAM_PDA"
 echo "  Storage Account: $STORAGE_PUBKEY"
+echo "  Prover Account: $PROVER_PUBKEY"
 echo "You can now run 04-execute.sh to execute the I Ching program"
+
+# Set Solana config and verify
+if ! solana config set --keypair "$EXECUTION_KEYPAIR"; then
+    echo "Error: Failed to set Solana config"
+    exit 1
+fi
+
+# Verify config was set correctly
+CURRENT_KEYPAIR=$(solana config get | grep "Keypair Path" | awk '{print $3}')
+if [ "$CURRENT_KEYPAIR" != "$EXECUTION_KEYPAIR" ]; then
+    echo "Error: Solana config not set correctly"
+    echo "Expected: $EXECUTION_KEYPAIR"
+    echo "Got: $CURRENT_KEYPAIR"
+    exit 1
+fi
+
+# Add explicit success exit
+exit 0

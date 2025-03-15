@@ -3,6 +3,23 @@
 # Exit on error
 set -e
 
+# Function to check if a command exists
+check_dependency() {
+    if ! command -v "$1" &>/dev/null; then
+        echo "Error: $1 is required but not installed."
+        echo "Please install $1 first"
+        exit 1
+    fi
+}
+
+# Check required dependencies
+echo "Checking dependencies..."
+REQUIRED_DEPS=("jq" "bc" "solana" "solana-keygen")
+for dep in "${REQUIRED_DEPS[@]}"; do
+    check_dependency "$dep"
+done
+echo "✓ All dependencies found"
+
 # Parse command line arguments
 USE_LOCAL=false
 DEBUG=false
@@ -22,6 +39,9 @@ while [[ "$#" -gt 0 ]]; do
         ;;
     esac
 done
+
+# Store original directory
+ORIGINAL_DIR=$(pwd)
 
 # Get project root directory (3 levels up from script location)
 PROJECT_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -52,19 +72,10 @@ if [ ! -f "$INPUT_PATH" ]; then
     exit 1
 fi
 
-# Store original directory
-ORIGINAL_DIR=$(pwd)
-
 echo "Found input file. Contents:"
 echo "----------------------------------------"
 cat "$INPUT_PATH" | jq '.'
 echo "----------------------------------------"
-
-# Extract image ID using jq
-if ! command -v jq &>/dev/null; then
-    echo "Error: jq is required but not installed. Please install jq first."
-    exit 1
-fi
 
 echo "Extracting imageId from input file..."
 export BONSOL_IMAGE_ID=$(jq -r '.imageId' "$INPUT_PATH")
@@ -84,10 +95,8 @@ echo "RISC0_DEV_MODE enabled for development/testing"
 if [ "$DEBUG" = true ]; then
     echo "Debug mode enabled"
     echo "Setting up logging configuration..."
-    # Add more detailed Solana program logging
     export RUST_LOG="risc0_zkvm=debug,bonsol_prover::input_resolver=debug,solana_program::log=debug,bonsol=info,solana_program=debug,risc0_zkvm::guest=debug,solana_runtime::message_processor=trace,solana_program_runtime=debug,solana_runtime=debug"
     export RUST_BACKTRACE=full
-    # Increase compute budget for more detailed logging
     echo "RUST_LOG set to: $RUST_LOG"
     echo "Full backtraces enabled"
 fi
@@ -102,7 +111,6 @@ if [ -n "$S3_ENDPOINT" ]; then
 
     # Add https:// but NOT the bucket
     export BONSOL_S3_ENDPOINT="https://$S3_ENDPOINT_CLEAN"
-    # Export bucket and path format
     export BONSOL_S3_BUCKET="${BUCKET:-8bitoracle}"
     export BONSOL_S3_PATH_FORMAT="iching-{image_id}"
 
@@ -112,7 +120,6 @@ if [ -n "$S3_ENDPOINT" ]; then
     echo "  Path format: $BONSOL_S3_PATH_FORMAT"
     echo "  Image ID: $BONSOL_IMAGE_ID"
 
-    # Show the final URL that will be constructed
     FINAL_URL="$BONSOL_S3_ENDPOINT/$BONSOL_S3_BUCKET/iching-$BONSOL_IMAGE_ID"
     echo "Final S3 URL will be: $FINAL_URL"
     echo "----------------------------------------"
@@ -145,30 +152,79 @@ echo "RISC0_DEV_MODE=$RISC0_DEV_MODE"
 echo "----------------------------------------"
 
 # Get the test execution keypair path
-EXECUTION_KEYPAIR="$BONSOL_HOME/onchain/8bitoracle-iching-callback/scripts/test-execution-keypair.json"
+EXECUTION_KEYPAIR="$PROJECT_ROOT/onchain/8bitoracle-iching-callback/scripts/test-execution-keypair.json"
 if [ ! -f "$EXECUTION_KEYPAIR" ]; then
     echo "Error: Test execution keypair not found at $EXECUTION_KEYPAIR"
     exit 1
 fi
 echo "Using test execution keypair: $EXECUTION_KEYPAIR"
 
-# Set the default Solana keypair
-solana config set --keypair "$EXECUTION_KEYPAIR"
+# Set the default Solana keypair and verify
+if ! solana config set --keypair "$EXECUTION_KEYPAIR"; then
+    echo "Error: Failed to set Solana config"
+    exit 1
+fi
+
+# Verify config was set correctly
+CURRENT_KEYPAIR=$(solana config get | grep "Keypair Path" | awk '{print $3}')
+if [ "$CURRENT_KEYPAIR" != "$EXECUTION_KEYPAIR" ]; then
+    echo "Error: Solana config not set correctly"
+    echo "Expected: $EXECUTION_KEYPAIR"
+    echo "Got: $CURRENT_KEYPAIR"
+    exit 1
+fi
 echo "Set default Solana keypair to: $EXECUTION_KEYPAIR"
 
 # Get the public key of the execution account
 EXECUTION_PUBKEY=$(solana-keygen pubkey "$EXECUTION_KEYPAIR")
+if [ -z "$EXECUTION_PUBKEY" ]; then
+    echo "Error: Could not get public key from keypair"
+    exit 1
+fi
 echo "Execution account public key: $EXECUTION_PUBKEY"
 
-# Check balance and airdrop if needed
+# Check balance and handle airdrop if needed
 BALANCE=$(solana balance "$EXECUTION_PUBKEY" | awk '{print $1}')
 echo "Current balance: $BALANCE SOL"
 
 if (($(echo "$BALANCE < 1" | bc -l))); then
-    echo "Balance too low, requesting airdrop..."
-    solana airdrop 2 "$EXECUTION_PUBKEY"
-    echo "New balance: $(solana balance "$EXECUTION_PUBKEY")"
+    echo "Balance too low for execution"
+    
+    # Get current cluster
+    CLUSTER=$(solana config get | grep "RPC URL" | awk '{print $3}')
+    if [[ "$CLUSTER" == *"mainnet"* ]]; then
+        echo "Error: Insufficient funds on mainnet. Please fund account manually."
+        exit 1
+    else
+        echo "Attempting to airdrop 2 SOL..."
+        # Try airdrop up to 3 times
+        for i in {1..3}; do
+            if solana airdrop 2 "$EXECUTION_PUBKEY"; then
+                echo "Airdrop successful!"
+                break
+            else
+                if [ $i -eq 3 ]; then
+                    echo "Error: Airdrop failed after 3 attempts. Please fund account manually or try again later."
+                    exit 1
+                fi
+                echo "Airdrop attempt $i failed. Retrying..."
+                sleep 2
+            fi
+        done
+        
+        # Verify new balance
+        NEW_BALANCE=$(solana balance "$EXECUTION_PUBKEY" | awk '{print $1}')
+        echo "New balance: $NEW_BALANCE SOL"
+        
+        if (($(echo "$NEW_BALANCE < 1" | bc -l))); then
+            echo "Error: Balance still too low after airdrop. Please fund account manually."
+            exit 1
+        fi
+    fi
 fi
+
+echo "Balance check passed ✓"
+echo "----------------------------------------"
 
 echo "----------------------------------------"
 echo "Verifying input.json before execution..."
