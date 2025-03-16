@@ -12,10 +12,12 @@ use solana_sdk::bs58;
 use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signer::Signer;
+use solana_sdk::signature::read_keypair_file;
 use std::fs::File;
 use std::sync::Arc;
 use tokio::time::Instant;
 use std::env;
+use std::path::Path;
 
 pub async fn execution_waiter(
     sdk: &BonsolClient,
@@ -96,7 +98,7 @@ pub async fn execution_waiter(
                 }
                 info!("Execution completed with exit code {}", ec);
                 
-                // Get the raw account data using our new method
+                // Get the raw account data for output parsing
                 if let Some(account_data) = sdk.get_execution_account_data(&requester, &execution_id).await? {
                     debug!("Raw account data inspection:");
                     debug!("  - Total size: {} bytes", account_data.len());
@@ -183,7 +185,7 @@ pub async fn execution_waiter(
 pub async fn execute(
     sdk: &BonsolClient,
     rpc_url: String,
-    keypair: impl Signer,
+    keypair_path: &str,
     execution_request_file: Option<String>,
     image_id: Option<String>,
     execution_id: Option<String>,
@@ -202,9 +204,15 @@ pub async fn execute(
         rpc_url, image_id, execution_id, timeout, tip, expiry, wait
     );
     
-    let erstr =
-        execution_request_file.ok_or(anyhow::anyhow!("Execution request file not provided"))?;
-    let erfile = File::open(erstr)?;
+    // Load the keypair
+    let keypair = read_keypair_file(keypair_path)
+        .map_err(|e| anyhow::anyhow!("Failed to read keypair file: {}", e))?;
+    let pubkey = keypair.pubkey();
+    info!("Loaded keypair with pubkey: {}", pubkey);
+
+    // Get the execution request file path, defaulting to "execution_request.json"
+    let execution_request_file = execution_request_file.unwrap_or_else(|| String::from("execution_request.json"));
+    let erfile = File::open(&execution_request_file)?;
     let execution_request_file: ExecutionRequestFile = serde_json::from_reader(erfile)?;
     
     debug!("Loaded execution request file");
@@ -218,7 +226,7 @@ pub async fn execute(
     
     let execution_id = execution_id
         .or(execution_request_file.execution_id)
-        .or(Some(rand_id(8)))
+        .or_else(|| Some(rand_id(8)))
         .ok_or(anyhow::anyhow!("Execution id not provided"))?;
         
     info!("Using execution ID: {}", execution_id);
@@ -226,7 +234,7 @@ pub async fn execute(
     let image_id = image_id
         .or(execution_request_file.image_id)
         .ok_or(anyhow::anyhow!("Image id not provided"))?;
-        
+    
     info!("Using image ID: {}", image_id);
     
     let tip = tip
@@ -255,12 +263,9 @@ pub async fn execute(
             vec![]
         };
 
-    let signer = keypair.pubkey();
-    info!("Using signer: {}", signer);
-    
     let transformed_inputs = execute_transform_cli_inputs(inputs)?;
     debug!("Transformed {} inputs", transformed_inputs.len());
-    
+
     let verify_input_hash = execution_request_file
         .execution_config
         .verify_input_hash
@@ -296,31 +301,33 @@ pub async fn execute(
             }
         }
         input_hash = hash.finalize().to_vec();
-        debug!("Calculated input hash: {:?}", input_hash);
+        debug!("Calculated input hash: {}", hex::encode(&input_hash));
     }
     
     let execution_config = ExecutionConfig {
         verify_input_hash,
-        input_hash: Some(&input_hash),
+        input_hash: if verify_input_hash {
+            Some(&input_hash)
+        } else {
+            None
+        },
         forward_output: execution_request_file
             .execution_config
             .forward_output
             .unwrap_or(false),
     };
-    
+
     let current_block = sdk.get_current_slot().await?;
     info!("execution expiry: {}", expiry);
     let expiry = expiry + current_block;
-    info!("Current block: {}, execution expiry: {}", current_block, expiry);
+    info!("Execution expiry {}", expiry);
+    info!("Current block {}", current_block);
     
-    println!("Execution expiry {}", expiry);
-    println!("current block {}", current_block);
     indicator.set_message("Building transaction");
-    
-    info!("Building execution transaction");
     let ixs = sdk
         .execute_v1(
-            &signer,
+            &pubkey,
+            &pubkey,
             &image_id,
             &execution_id,
             transformed_inputs
@@ -330,22 +337,22 @@ pub async fn execute(
             tip,
             expiry,
             execution_config,
-            callback_config.map(|c| c.into()),
+            callback_config.map(TryInto::try_into).transpose()?,
             None, // A future cli change can implement prover version selection
         )
         .await?;
-        
+
     debug!("Built {} instructions", ixs.len());
     indicator.finish_with_message("Sending transaction");
     
     info!("Sending transaction");
-    sdk.send_txn_standard(&keypair, ixs).await?;
+    sdk.send_txn_with_multiple_signers(&[&keypair], ixs).await?;
     info!("Transaction sent successfully");
     
     indicator.finish_with_message("Waiting for execution");
     if wait {
         info!("Waiting for execution completion");
-        execution_waiter(sdk, keypair.pubkey(), execution_id, expiry, timeout).await
+        execution_waiter(sdk, pubkey, execution_id, expiry, timeout).await
     } else {
         info!("Not waiting for execution completion");
         Ok(())

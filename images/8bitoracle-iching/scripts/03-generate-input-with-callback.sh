@@ -114,6 +114,25 @@ if [ ! -f "$PAYER_KEYPAIR" ]; then
   echo "Generated new payer keypair at: $PAYER_KEYPAIR"
 fi
 
+# Export the BONSOL keypair environment variables
+export BONSOL_REQUESTER_KEYPAIR="$EXECUTION_KEYPAIR"
+export BONSOL_PAYER_KEYPAIR="$PAYER_KEYPAIR"
+echo "Set BONSOL keypair environment variables:"
+echo "BONSOL_REQUESTER_KEYPAIR=$BONSOL_REQUESTER_KEYPAIR"
+echo "BONSOL_PAYER_KEYPAIR=$BONSOL_PAYER_KEYPAIR"
+
+# Write exports to a file that can be sourced later
+EXPORT_FILE="$(dirname "$0")/bonsol_exports.sh"
+echo "Writing environment exports to: $EXPORT_FILE"
+cat > "$EXPORT_FILE" << EOF
+export BONSOL_REQUESTER_KEYPAIR="$EXECUTION_KEYPAIR"
+export BONSOL_PAYER_KEYPAIR="$PAYER_KEYPAIR"
+EOF
+
+echo "Environment variables have been written to $EXPORT_FILE"
+echo "To use them in your current shell, run:"
+echo "  source $EXPORT_FILE"
+
 # Get the public key of the payer
 PAYER=$(solana-keygen pubkey "$PAYER_KEYPAIR")
 if [ -z "$PAYER" ]; then

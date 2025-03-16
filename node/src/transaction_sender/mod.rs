@@ -148,18 +148,66 @@ impl RpcTransactionSender {
         accounts: &[AccountMeta],
         data_lengths: &[usize],
     ) -> Result<Vec<Instruction>> {
+        info!("\n🔍 Checking Rent Funding Requirements");
+        debug!("Number of accounts to check: {}", accounts.len());
+        debug!("Data lengths provided: {:?}", data_lengths);
+        
         let mut instructions = Vec::new();
         
         for (i, account) in accounts.iter().enumerate() {
+            debug!("\nAccount {} Analysis:", i);
+            debug!("Address: {}", account.pubkey);
+            debug!("Is Writable: {}", account.is_writable);
+            
             if !account.is_writable {
+                debug!("Skipping non-writable account");
                 continue;
             }
             
-            let account_info = self.rpc_client.get_account(&account.pubkey).await?;
-            let required_balance = self.get_rent_exempt_balance(data_lengths.get(i).copied().unwrap_or(0)).await?;
+            info!("Fetching account info for {}", account.pubkey);
+            let account_info = match self.rpc_client.get_account(&account.pubkey).await {
+                Ok(info) => {
+                    debug!("✓ Account info retrieved");
+                    debug!("Current balance: {} lamports", info.lamports);
+                    debug!("Current data size: {} bytes", info.data.len());
+                    info
+                }
+                Err(e) => {
+                    debug!("Account not found (expected for new accounts): {:?}", e);
+                    debug!("Proceeding with zero balance assumption");
+                    solana_sdk::account::Account {
+                        lamports: 0,
+                        data: vec![],
+                        owner: solana_sdk::system_program::ID,
+                        executable: false,
+                        rent_epoch: 0,
+                    }
+                }
+            };
+            
+            let data_len = data_lengths.get(i).copied().unwrap_or(0);
+            debug!("Required data length: {} bytes", data_len);
+            
+            debug!("Calculating rent-exempt balance...");
+            let required_balance = match self.get_rent_exempt_balance(data_len).await {
+                Ok(balance) => {
+                    debug!("✓ Required balance calculated: {} lamports", balance);
+                    balance
+                }
+                Err(e) => {
+                    error!("Failed to calculate rent-exempt balance: {:?}", e);
+                    return Err(e.into());
+                }
+            };
             
             if account_info.lamports < required_balance {
                 let transfer_amount = required_balance.saturating_sub(account_info.lamports);
+                info!("💰 Account {} requires funding:", account.pubkey);
+                debug!("Current balance: {} lamports", account_info.lamports);
+                debug!("Required balance: {} lamports", required_balance);
+                debug!("Transfer amount: {} lamports", transfer_amount);
+                
+                debug!("Creating transfer instruction...");
                 instructions.push(
                     system_instruction::transfer(
                         &self.signer.pubkey(),
@@ -167,6 +215,30 @@ impl RpcTransactionSender {
                         transfer_amount,
                     )
                 );
+                debug!("✓ Transfer instruction created");
+            } else {
+                debug!("✓ Account {} is sufficiently funded", account.pubkey);
+                debug!("Current: {} lamports", account_info.lamports);
+                debug!("Required: {} lamports", required_balance);
+            }
+        }
+        
+        info!("\n📋 Rent Funding Summary: {} instructions created", instructions.len());
+        if !instructions.is_empty() {
+            debug!("Transfer Instructions:");
+            for (i, ix) in instructions.iter().enumerate() {
+                debug!("Instruction {}:", i);
+                debug!("  From: {}", self.signer.pubkey());
+                debug!("  To: {}", ix.accounts[1].pubkey);
+                // The amount is the last 8 bytes of the instruction data
+                let amount = if ix.data.len() >= 8 {
+                    let mut bytes = [0u8; 8];
+                    bytes.copy_from_slice(&ix.data[ix.data.len()-8..]);
+                    u64::from_le_bytes(bytes)
+                } else {
+                    0
+                };
+                debug!("  Amount: {} lamports", amount);
             }
         }
         
@@ -268,16 +340,34 @@ impl TransactionSender for RpcTransactionSender {
         exit_code_system: u32,
         exit_code_user: u32,
     ) -> Result<Signature> {
+        info!("Step 4/7: Submit Proof [Prover]");
         info!("🔍 Transaction Construction:");
         info!("Requester Account: {}", requester_account);
         info!("Signer Account (Prover): {}", self.signer.pubkey());
         
+        let dev_mode = std::env::var("RISC0_DEV_MODE").is_ok();
+        if dev_mode {
+            info!("⚠️ Running in RISC0_DEV_MODE - using simplified proof verification");
+        }
+        
         let (execution_request_data_account, _) =
             execution_address(&requester_account, execution_id.as_bytes());
-        info!("Execution Request Account: {}", execution_request_data_account);
+        info!("Status: Checking execution account: {}", execution_request_data_account);
         
-        // Use original account structure but with logging
+        // Verify execution account exists before proceeding
+        match self.rpc_client.get_account(&execution_request_data_account).await {
+            Ok(_) => info!("✓ Execution account found and verified"),
+            Err(e) => {
+                error!("❌ Execution account not found or inaccessible");
+                error!("Account: {}", execution_request_data_account);
+                error!("Error: {:?}", e);
+                return Err(anyhow::anyhow!("Execution account not found: {}", e));
+            }
+        }
+        
+        // Use original account structure but with enhanced logging
         let (program_id, mut accounts) = if let Some(ref pe) = callback_exec {
+            info!("Status: Setting up callback configuration");
             info!("Using callback program: {}", pe.program_id);
             info!("Additional accounts provided: {}", additional_accounts.len());
             for (i, acc) in additional_accounts.iter().enumerate() {
@@ -287,11 +377,11 @@ impl TransactionSender for RpcTransactionSender {
             }
             (pe.program_id, additional_accounts)
         } else {
-            info!("No callback program specified");
+            info!("Status: No callback program specified");
             (self.bonsol_program, vec![])
         };
 
-        info!("\n🔍 Building Standard Accounts:");
+        info!("\nStatus: Building standard accounts");
         info!("1. Requester Account: {}", requester_account);
         info!("   Is Signer: true, Is Writable: true");
         info!("2. Execution Account: {}", execution_request_data_account);
@@ -303,50 +393,67 @@ impl TransactionSender for RpcTransactionSender {
 
         // Create standard accounts vector with correct permissions
         let mut standard_accounts = vec![
-            AccountMeta::new(requester_account, true),  // Requester as signer and writable
-            AccountMeta::new(execution_request_data_account, false), // Execution account as writable but not signer
-            AccountMeta::new_readonly(program_id, false), // Callback program as readonly
-            AccountMeta::new(self.signer.pubkey(), true), // Prover as signer and writable
+            AccountMeta::new(requester_account, true),
+            AccountMeta::new(execution_request_data_account, false),
+            AccountMeta::new_readonly(program_id, false),
+            AccountMeta::new(self.signer.pubkey(), true),
         ];
 
+        info!("Status: Checking account funding requirements");
         // Add extra accounts from callback if present
         if let Some(ref pe) = callback_exec {
-            info!("\n🔍 Adding Callback Extra Accounts:");
+            info!("Status: Adding callback extra accounts");
             info!("Instruction prefix: {:?}", pe.instruction_prefix);
             for (i, acc) in accounts.iter().enumerate() {
                 info!("Extra Account {}: {}", i, acc.pubkey);
                 info!("  Is Signer: {}", acc.is_signer);
                 info!("  Is Writable: {}", acc.is_writable);
+                
+                // Verify each account exists before proceeding
+                if acc.is_writable {
+                    info!("Status: Checking writable account {}", acc.pubkey);
+                    match self.rpc_client.get_account(&acc.pubkey).await {
+                        Ok(_) => info!("✓ Account {} exists", acc.pubkey),
+                        Err(e) => {
+                            error!("❌ Required account not found: {}", acc.pubkey);
+                            error!("Error: {:?}", e);
+                            return Err(anyhow::anyhow!("Required account not found: {}", e));
+                        }
+                    }
+                }
             }
             standard_accounts.extend(accounts);
         }
 
+        // Log final account configuration
         info!("\n📋 Final Account Configuration:");
         for (i, acc) in standard_accounts.iter().enumerate() {
             info!("Account {}: {}", i, acc.pubkey);
             info!("  Is Signer: {}", acc.is_signer);
             info!("  Is Writable: {}", acc.is_writable);
-            if acc.pubkey == requester_account {
-                info!("  Role: Requester");
-            } else if acc.pubkey == execution_request_data_account {
-                info!("  Role: Execution Account");
+            if acc.pubkey == system_program::id() {
+                info!("  Type: System Program");
             } else if acc.pubkey == program_id {
-                info!("  Role: Callback Program");
+                info!("  Type: Program ID");
             } else if acc.pubkey == self.signer.pubkey() {
-                info!("  Role: Prover");
+                info!("  Type: Signer");
+            } else if acc.pubkey == requester_account {
+                info!("  Type: Requester");
+            } else if acc.pubkey == execution_request_data_account {
+                info!("  Type: Execution Account");
             } else {
-                info!("  Role: Extra Account");
+                info!("  Type: Additional Account");
             }
         }
 
         // Build compute budget instructions
-        info!("\n🔧 Building Instructions:");
+        info!("\nStatus: Building instructions");
         let mut instructions = self.create_compute_budget_instructions().await?;
         info!("Added {} compute budget instructions", instructions.len());
         
         // Add rent funding instructions if needed
         if callback_exec.is_some() {
-            info!("Adding rent funding instructions");
+            info!("Status: Adding rent funding instructions");
             let rent_instructions = self.create_rent_funding_instructions(&standard_accounts, &[0, 0, 14, 0]).await?;
             info!("Added {} rent funding instructions", rent_instructions.len());
             instructions.extend(rent_instructions);
@@ -355,12 +462,25 @@ impl TransactionSender for RpcTransactionSender {
         // Create the main instruction data
         info!("\n🔧 Building Instruction Data:");
         let mut fbb = FlatBufferBuilder::new();
+        info!("Creating instruction data vectors:");
+        info!("  Proof length: {} bytes", proof.len());
+        info!("  Execution digest length: {} bytes", execution_digest.len());
+        info!("  Input digest length: {} bytes", input_digest.len());
+        info!("  Assumption digest length: {} bytes", assumption_digest.len());
+        info!("  Committed outputs length: {} bytes", committed_outputs.len());
+        info!("  Execution ID: {}", execution_id);
+        
         let proof_vec = fbb.create_vector(proof);
         let execution_digest = fbb.create_vector(execution_digest);
         let input_digest = fbb.create_vector(input_digest);
         let assumption_digest = fbb.create_vector(assumption_digest);
         let eid = fbb.create_string(execution_id);
         let out = fbb.create_vector(committed_outputs);
+        
+        info!("Creating StatusV1 with:");
+        info!("  Status: Completed");
+        info!("  Exit codes - System: {}, User: {}", exit_code_system, exit_code_user);
+        
         let stat = StatusV1::create(
             &mut fbb,
             &StatusV1Args {
@@ -401,6 +521,11 @@ impl TransactionSender for RpcTransactionSender {
             info!("  Number of accounts: {}", ix.accounts.len());
         }
 
+        info!("\nStatus: Preparing to submit proof transaction");
+        if dev_mode {
+            info!("Dev Mode: Using simplified proof data structures");
+        }
+        
         let (blockhash, last_valid) = self
             .rpc_client
             .get_latest_blockhash_with_commitment(self.rpc_client.commitment())

@@ -181,7 +181,8 @@ impl BonsolClient {
 
     pub async fn execute_v1<'a>(
         &self,
-        signer: &Pubkey,
+        requester: &Pubkey,
+        payer: &Pubkey,
         image_id: &str,
         execution_id: &str,
         inputs: Vec<InputRef<'a>>,
@@ -200,7 +201,7 @@ impl BonsolClient {
         );
         
         debug!("Getting compute fees...");
-        let compute_price_val = self.get_fees(signer).await?;
+        let compute_price_val = self.get_fees(payer).await?;
         info!("Using compute price: {}", compute_price_val);
 
         let fbs_version_or_none = match prover_version {
@@ -217,8 +218,8 @@ impl BonsolClient {
 
         debug!("Building execute instruction...");
         let instruction = instructions::execute_v1(
-            signer,
-            signer,
+            requester,
+            payer,
             image_id,
             execution_id,
             inputs,
@@ -465,5 +466,47 @@ impl BonsolClient {
         }
         
         Ok(account.map(|acc| acc.data))
+    }
+
+    pub async fn send_txn_with_multiple_signers(
+        &self,
+        signers: &[&impl Signer],
+        instructions: Vec<Instruction>,
+    ) -> Result<()> {
+        debug!("Sending transaction with {} signers", signers.len());
+        let latest_blockhash = self
+            .rpc_client
+            .get_latest_blockhash()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to get blockhash: {:?}", e))?;
+
+        let message = v0::Message::try_compile(
+            &signers[0].pubkey(),
+            &instructions,
+            &[],
+            latest_blockhash,
+        )?;
+
+        let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), signers)?;
+
+        debug!("Sending transaction with {} instructions", instructions.len());
+        self.rpc_client
+            .send_transaction_with_config(
+                &tx,
+                RpcSendTransactionConfig {
+                    skip_preflight: true,
+                    ..RpcSendTransactionConfig::default()
+                },
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to send transaction: {:?}", e))?;
+
+        debug!("Waiting for transaction confirmation");
+        self.rpc_client
+            .confirm_transaction_with_spinner(&tx.signatures[0], &latest_blockhash, CommitmentConfig::confirmed())
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to confirm transaction: {:?}", e))?;
+
+        Ok(())
     }
 }

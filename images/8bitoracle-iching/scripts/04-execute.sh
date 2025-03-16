@@ -47,6 +47,33 @@ ORIGINAL_DIR=$(pwd)
 PROJECT_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 echo "Project root directory: $PROJECT_ROOT"
 
+# Set BONSOL_CMD based on environment
+if [ "$USE_LOCAL" = true ]; then
+    # Use local debug build
+    BONSOL_BIN="$PROJECT_ROOT/target/debug/bonsol"
+    
+    # Check if debug build exists
+    if [ ! -f "$BONSOL_BIN" ]; then
+        echo "Error: Could not find local bonsol binary at $BONSOL_BIN"
+        echo "Please build the project first with:"
+        echo "  cargo build"
+        exit 1
+    fi
+    
+    echo "Using local bonsol binary: $BONSOL_BIN"
+    BONSOL_CMD="$BONSOL_BIN"
+else
+    # Use installed bonsol from .cargo/bin
+    if ! command -v bonsol &>/dev/null; then
+        echo "Error: bonsol not found in PATH"
+        echo "Please install bonsol first with:"
+        echo "  cargo install bonsol"
+        exit 1
+    fi
+    
+    BONSOL_CMD="bonsol"
+fi
+
 # Source environment variables
 ENV_FILE="$(dirname "$0")/../.env"
 if [ -f "$ENV_FILE" ]; then
@@ -91,110 +118,20 @@ echo "----------------------------------------"
 export RISC0_DEV_MODE=1
 echo "RISC0_DEV_MODE enabled for development/testing"
 
-# Enable debug logging if --debug flag is passed
-if [ "$DEBUG" = true ]; then
-    echo "Debug mode enabled"
-    echo "Setting up logging configuration..."
-    export RUST_LOG="risc0_zkvm=debug,bonsol_prover::input_resolver=debug,solana_program::log=debug,bonsol=info,solana_program=debug,risc0_zkvm::guest=debug,solana_runtime::message_processor=trace,solana_program_runtime=debug,solana_runtime=debug"
-    export RUST_BACKTRACE=full
-    echo "RUST_LOG set to: $RUST_LOG"
-    echo "Full backtraces enabled"
-fi
-
-# Set BONSOL_S3_ENDPOINT with base URL only (no bucket)
-if [ -n "$S3_ENDPOINT" ]; then
-    echo "Configuring S3 settings..."
-    # Remove any existing protocol and trailing slash
-    S3_ENDPOINT_CLEAN=${S3_ENDPOINT#https://}
-    S3_ENDPOINT_CLEAN=${S3_ENDPOINT_CLEAN#http://}
-    S3_ENDPOINT_CLEAN=${S3_ENDPOINT_CLEAN%/}
-
-    # Add https:// but NOT the bucket
-    export BONSOL_S3_ENDPOINT="https://$S3_ENDPOINT_CLEAN"
-    export BONSOL_S3_BUCKET="${BUCKET:-8bitoracle}"
-    export BONSOL_S3_PATH_FORMAT="iching-{image_id}"
-
-    echo "S3 Configuration:"
-    echo "  Base URL: $BONSOL_S3_ENDPOINT"
-    echo "  Bucket: $BONSOL_S3_BUCKET"
-    echo "  Path format: $BONSOL_S3_PATH_FORMAT"
-    echo "  Image ID: $BONSOL_IMAGE_ID"
-
-    FINAL_URL="$BONSOL_S3_ENDPOINT/$BONSOL_S3_BUCKET/iching-$BONSOL_IMAGE_ID"
-    echo "Final S3 URL will be: $FINAL_URL"
-    echo "----------------------------------------"
-fi
-
-# Determine which bonsol to use
-if [ "$USE_LOCAL" = true ]; then
-    if [ -f "${BONSOL_HOME}/target/debug/bonsol" ]; then
-        BONSOL_CMD="${BONSOL_HOME}/target/debug/bonsol"
-        echo "Using local bonsol build: $BONSOL_CMD"
-    else
-        echo "Error: Local bonsol build not found at ${BONSOL_HOME}/target/debug/bonsol"
-        echo "Please build bonsol locally first using 'cargo build'"
-        exit 1
-    fi
-else
-    BONSOL_CMD="bonsol"
-    echo "Using installed bonsol from PATH"
-fi
-
-echo "----------------------------------------"
-echo "Environment variables that will be used:"
-echo "BONSOL_IMAGE_ID=$BONSOL_IMAGE_ID"
-echo "BONSOL_S3_ENDPOINT=$BONSOL_S3_ENDPOINT"
-echo "BONSOL_S3_BUCKET=$BONSOL_S3_BUCKET"
-echo "BONSOL_S3_PATH_FORMAT=$BONSOL_S3_PATH_FORMAT"
-echo "RUST_LOG=$RUST_LOG"
-echo "RUST_BACKTRACE=$RUST_BACKTRACE"
-echo "RISC0_DEV_MODE=$RISC0_DEV_MODE"
-echo "----------------------------------------"
-
-# Get the test execution keypair path
-EXECUTION_KEYPAIR="$PROJECT_ROOT/onchain/8bitoracle-iching-callback/scripts/test-execution-keypair.json"
-if [ ! -f "$EXECUTION_KEYPAIR" ]; then
-    echo "Error: Test execution keypair not found at $EXECUTION_KEYPAIR"
-    exit 1
-fi
-echo "Using test execution keypair: $EXECUTION_KEYPAIR"
-
-# Get the test payer keypair path
-PAYER_KEYPAIR="$PROJECT_ROOT/onchain/8bitoracle-iching-callback/scripts/test-payer-keypair.json"
-if [ ! -f "$PAYER_KEYPAIR" ]; then
-    echo "Error: Test payer keypair not found at $PAYER_KEYPAIR"
-    exit 1
-fi
-echo "Using test payer keypair: $PAYER_KEYPAIR"
-
-# Store the original Solana config
-echo "Storing original Solana configuration..."
-ORIGINAL_KEYPAIR=$(solana config get | grep "Keypair Path" | awk '{print $3}')
-if [ "$ORIGINAL_KEYPAIR" = "$PAYER_KEYPAIR" ]; then
-    # If original keypair is already the test payer, use the default location
-    ORIGINAL_KEYPAIR="$HOME/.config/solana/id.json"
-fi
-echo "Original keypair path: $ORIGINAL_KEYPAIR"
-
-# Set the payer keypair as default and verify
-if ! solana config set --keypair "$PAYER_KEYPAIR"; then
-    echo "Error: Failed to set Solana config"
+# Check for BONSOL keypair environment variables
+if [ -z "$BONSOL_REQUESTER_KEYPAIR" ] || [ -z "$BONSOL_PAYER_KEYPAIR" ]; then
+    echo "Warning: BONSOL keypair environment variables not set"
+    echo "Please run 03-generate-input-with-callback.sh first"
     exit 1
 fi
 
-# Verify config was set correctly
-CURRENT_KEYPAIR=$(solana config get | grep "Keypair Path" | awk '{print $3}')
-if [ "$CURRENT_KEYPAIR" != "$PAYER_KEYPAIR" ]; then
-    echo "Error: Solana config not set correctly"
-    echo "Expected: $PAYER_KEYPAIR"
-    echo "Got: $CURRENT_KEYPAIR"
-    exit 1
-fi
-echo "Set default Solana keypair to: $PAYER_KEYPAIR"
+echo "Using BONSOL keypairs:"
+echo "Requester: $BONSOL_REQUESTER_KEYPAIR"
+echo "Payer: $BONSOL_PAYER_KEYPAIR"
 
 # Get the public keys for both accounts
-REQUESTER_PUBKEY=$(solana-keygen pubkey "$EXECUTION_KEYPAIR")
-PAYER_PUBKEY=$(solana-keygen pubkey "$PAYER_KEYPAIR")
+REQUESTER_PUBKEY=$(solana-keygen pubkey "$BONSOL_REQUESTER_KEYPAIR")
+PAYER_PUBKEY=$(solana-keygen pubkey "$BONSOL_PAYER_KEYPAIR")
 
 if [ -z "$REQUESTER_PUBKEY" ] || [ -z "$PAYER_PUBKEY" ]; then
     echo "Error: Could not get public keys from keypairs"
@@ -202,6 +139,22 @@ if [ -z "$REQUESTER_PUBKEY" ] || [ -z "$PAYER_PUBKEY" ]; then
 fi
 echo "Requester account public key: $REQUESTER_PUBKEY"
 echo "Payer account public key: $PAYER_PUBKEY"
+
+# Set the payer keypair as default and verify
+if ! solana config set --keypair "$BONSOL_PAYER_KEYPAIR"; then
+    echo "Error: Failed to set Solana config"
+    exit 1
+fi
+
+# Verify config was set correctly
+CURRENT_KEYPAIR=$(solana config get | grep "Keypair Path" | awk '{print $3}')
+if [ "$CURRENT_KEYPAIR" != "$BONSOL_PAYER_KEYPAIR" ]; then
+    echo "Error: Solana config not set correctly"
+    echo "Expected: $BONSOL_PAYER_KEYPAIR"
+    echo "Got: $CURRENT_KEYPAIR"
+    exit 1
+fi
+echo "Set default Solana keypair to: $BONSOL_PAYER_KEYPAIR"
 
 # Check payer balance and handle airdrop if needed
 BALANCE=$(solana balance "$PAYER_PUBKEY" | awk '{print $1}')
@@ -251,7 +204,7 @@ echo "Current execution account balance: $EXEC_BALANCE SOL"
 
 if (($(echo "$EXEC_BALANCE < 0.1" | bc -l))); then
     echo "Execution account balance low, transferring 0.1 SOL from payer..."
-    if ! solana transfer --allow-unfunded-recipient "$REQUESTER_PUBKEY" 0.1 --keypair "$PAYER_KEYPAIR"; then
+    if ! solana transfer --allow-unfunded-recipient "$REQUESTER_PUBKEY" 0.1 --keypair "$BONSOL_PAYER_KEYPAIR"; then
         echo "Error: Failed to transfer SOL to execution account"
         exit 1
     fi
@@ -357,20 +310,18 @@ if [ "$DEBUG" = true ]; then
     echo "----------------------------------------"
 
     # Run with debug output and trace-level logging
-    RUST_LOG="$RUST_LOG,solana_runtime=trace" \
-        BONSOL_REQUESTER_KEYPAIR="$EXECUTION_KEYPAIR" \
-        BONSOL_PAYER_KEYPAIR="$PAYER_KEYPAIR" \
-        "$BONSOL_CMD" execute -f "$INPUT_PATH" \
-        --wait || {
+    if ! RUST_LOG="$RUST_LOG,solana_runtime=trace" \
+        BONSOL_REQUESTER_KEYPAIR="$BONSOL_REQUESTER_KEYPAIR" \
+        BONSOL_PAYER_KEYPAIR="$BONSOL_PAYER_KEYPAIR" \
+        $BONSOL_CMD execute -f "$INPUT_PATH" --wait; then
         echo "Error: Execution failed!"
         echo "Please check the error messages above for details."
         exit 1
-    }
+    fi
 else
-    if ! BONSOL_REQUESTER_KEYPAIR="$EXECUTION_KEYPAIR" \
-        BONSOL_PAYER_KEYPAIR="$PAYER_KEYPAIR" \
-        "$BONSOL_CMD" execute -f "$INPUT_PATH" \
-        --wait; then
+    if ! BONSOL_REQUESTER_KEYPAIR="$BONSOL_REQUESTER_KEYPAIR" \
+        BONSOL_PAYER_KEYPAIR="$BONSOL_PAYER_KEYPAIR" \
+        $BONSOL_CMD execute -f "$INPUT_PATH" --wait; then
         echo "Error: Execution failed!"
         echo "Run with --debug flag for more information."
         exit 1
@@ -380,6 +331,6 @@ fi
 echo "Execution complete! Check the output above for your I Ching reading."
 
 # Restore original Solana config
-if ! solana config set --keypair "$ORIGINAL_KEYPAIR"; then
+if ! solana config set --keypair "$CURRENT_KEYPAIR"; then
     echo "Warning: Failed to restore original Solana config"
 fi
