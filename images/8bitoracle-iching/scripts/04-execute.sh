@@ -168,8 +168,13 @@ fi
 echo "Using test payer keypair: $PAYER_KEYPAIR"
 
 # Store the original Solana config
+echo "Storing original Solana configuration..."
 ORIGINAL_KEYPAIR=$(solana config get | grep "Keypair Path" | awk '{print $3}')
-echo "Original Solana keypair: $ORIGINAL_KEYPAIR"
+if [ "$ORIGINAL_KEYPAIR" = "$PAYER_KEYPAIR" ]; then
+    # If original keypair is already the test payer, use the default location
+    ORIGINAL_KEYPAIR="$HOME/.config/solana/id.json"
+fi
+echo "Original keypair path: $ORIGINAL_KEYPAIR"
 
 # Set the payer keypair as default and verify
 if ! solana config set --keypair "$PAYER_KEYPAIR"; then
@@ -188,14 +193,14 @@ fi
 echo "Set default Solana keypair to: $PAYER_KEYPAIR"
 
 # Get the public keys for both accounts
-EXECUTION_PUBKEY=$(solana-keygen pubkey "$EXECUTION_KEYPAIR")
+REQUESTER_PUBKEY=$(solana-keygen pubkey "$EXECUTION_KEYPAIR")
 PAYER_PUBKEY=$(solana-keygen pubkey "$PAYER_KEYPAIR")
 
-if [ -z "$EXECUTION_PUBKEY" ] || [ -z "$PAYER_PUBKEY" ]; then
+if [ -z "$REQUESTER_PUBKEY" ] || [ -z "$PAYER_PUBKEY" ]; then
     echo "Error: Could not get public keys from keypairs"
     exit 1
 fi
-echo "Execution account public key: $EXECUTION_PUBKEY"
+echo "Requester account public key: $REQUESTER_PUBKEY"
 echo "Payer account public key: $PAYER_PUBKEY"
 
 # Check payer balance and handle airdrop if needed
@@ -211,10 +216,10 @@ if (($(echo "$BALANCE < 1" | bc -l))); then
         echo "Error: Insufficient funds on mainnet. Please fund payer account manually."
         exit 1
     else
-        echo "Attempting to airdrop 2 SOL to payer account..."
+        echo "Attempting to airdrop 10 SOL to payer account..."
         # Try airdrop up to 3 times
         for i in {1..3}; do
-            if solana airdrop 2 "$PAYER_PUBKEY"; then
+            if solana airdrop 10 "$PAYER_PUBKEY"; then
                 echo "Airdrop successful!"
                 break
             else
@@ -241,12 +246,12 @@ fi
 echo "Payer balance check passed ✓"
 
 # Also check execution account balance
-EXEC_BALANCE=$(solana balance "$EXECUTION_PUBKEY" | awk '{print $1}')
+EXEC_BALANCE=$(solana balance "$REQUESTER_PUBKEY" | awk '{print $1}')
 echo "Current execution account balance: $EXEC_BALANCE SOL"
 
 if (($(echo "$EXEC_BALANCE < 0.1" | bc -l))); then
     echo "Execution account balance low, transferring 0.1 SOL from payer..."
-    if ! solana transfer --allow-unfunded-recipient "$EXECUTION_PUBKEY" 0.1 --keypair "$PAYER_KEYPAIR"; then
+    if ! solana transfer --allow-unfunded-recipient "$REQUESTER_PUBKEY" 0.1 --keypair "$PAYER_KEYPAIR"; then
         echo "Error: Failed to transfer SOL to execution account"
         exit 1
     fi
@@ -297,10 +302,6 @@ if ! solana program show "$CALLBACK_PROGRAM_ID" &>/dev/null; then
 fi
 echo "✓ Callback program found"
 
-# Get the PDA from input.json
-PDA=$(jq -r '.callbackConfig.extraAccounts[1].pubkey' "$INPUT_PATH")
-echo "PDA from input.json: $PDA"
-
 echo "----------------------------------------"
 
 # Calculate space for HexagramData
@@ -320,52 +321,33 @@ HEXAGRAM_SPACE=$((\
 echo "Verifying hexagram storage account configuration..."
 echo "- Space required: $HEXAGRAM_SPACE bytes"
 
-# Get the PDA and timestamp from input.json
-PDA=$(jq -r '.callbackConfig.extraAccounts[2].pubkey' "$INPUT_PATH")
+# Get the timestamp from input.json
 TIMESTAMP=$(jq -r '.timestamp' "$INPUT_PATH")
-echo "- PDA: $PDA"
 echo "- Timestamp: $TIMESTAMP"
 
 # Note: We don't need to create PDAs manually - they are created on-chain
 # during the first instruction that uses them. Just verify our configuration:
 echo "Verifying account configuration..."
-echo "- Execution PDA (account[0]): $(jq -r '.callbackConfig.extraAccounts[0].pubkey' "$INPUT_PATH")"
-echo "- Hexagram PDA (account[1]): $(jq -r '.callbackConfig.extraAccounts[1].pubkey' "$INPUT_PATH")"
-echo "- System Program (account[2]): $(jq -r '.callbackConfig.extraAccounts[2].pubkey' "$INPUT_PATH")"
+echo "Note: Bonsol prepends these accounts: requester(0), execution(1), callback_program(2), prover(3)"
+echo "Extra accounts start at index 4:"
+
+# Get and validate the account configuration
+HEXAGRAM_PDA=$(jq -r '.callbackConfig.extraAccounts[0].pubkey' "$INPUT_PATH")
+SYSTEM_PROGRAM=$(jq -r '.callbackConfig.extraAccounts[1].pubkey' "$INPUT_PATH")
+DEPLOYMENT_PDA=$(jq -r '.callbackConfig.extraAccounts[2].pubkey' "$INPUT_PATH")
+
+echo "- Hexagram Account (account[4]): $HEXAGRAM_PDA"
+if [ "$SYSTEM_PROGRAM" != "11111111111111111111111111111111" ]; then
+    echo "Error: System Program account (account[5]) must be 11111111111111111111111111111111"
+    echo "Got: $SYSTEM_PROGRAM"
+    exit 1
+fi
+echo "- System Program (account[5]): $SYSTEM_PROGRAM"
+echo "- Deployment Account (account[6]): $DEPLOYMENT_PDA"
 
 echo "Account configuration verified ✓"
 echo "----------------------------------------"
 
-# Create hexagram account if it doesn't exist
-HEXAGRAM_PDA=$(jq -r '.callbackConfig.extraAccounts[0].pubkey' "$INPUT_PATH")
-echo "Creating hexagram account at: $HEXAGRAM_PDA"
-
-# Calculate rent-exempt balance
-RENT_EXEMPTION=$(solana rent $HEXAGRAM_SPACE | grep "Rent-exempt minimum:" | awk '{print $3}')
-if [ -z "$RENT_EXEMPTION" ]; then
-    echo "Error: Failed to calculate rent exemption"
-    exit 1
-fi
-echo "Required rent-exempt balance: $RENT_EXEMPTION lamports"
-
-# Check if account exists
-if ! solana account "$HEXAGRAM_PDA" &>/dev/null; then
-    echo "Hexagram account does not exist, creating..."
-    if ! solana create-account \
-        --keypair "$PAYER_KEYPAIR" \
-        --space $HEXAGRAM_SPACE \
-        --program-id "$CALLBACK_PROGRAM_ID" \
-        "$HEXAGRAM_PDA" \
-        "$RENT_EXEMPTION"; then
-        echo "Error: Failed to create hexagram account"
-        exit 1
-    fi
-    echo "✓ Hexagram account created successfully"
-else
-    echo "Hexagram account already exists"
-fi
-
-echo "----------------------------------------"
 echo "Executing I Ching program..."
 if [ "$DEBUG" = true ]; then
     echo "Running with debug configuration:"
@@ -376,6 +358,8 @@ if [ "$DEBUG" = true ]; then
 
     # Run with debug output and trace-level logging
     RUST_LOG="$RUST_LOG,solana_runtime=trace" \
+        BONSOL_REQUESTER_KEYPAIR="$EXECUTION_KEYPAIR" \
+        BONSOL_PAYER_KEYPAIR="$PAYER_KEYPAIR" \
         "$BONSOL_CMD" execute -f "$INPUT_PATH" \
         --wait || {
         echo "Error: Execution failed!"
@@ -383,7 +367,9 @@ if [ "$DEBUG" = true ]; then
         exit 1
     }
 else
-    if ! "$BONSOL_CMD" execute -f "$INPUT_PATH" \
+    if ! BONSOL_REQUESTER_KEYPAIR="$EXECUTION_KEYPAIR" \
+        BONSOL_PAYER_KEYPAIR="$PAYER_KEYPAIR" \
+        "$BONSOL_CMD" execute -f "$INPUT_PATH" \
         --wait; then
         echo "Error: Execution failed!"
         echo "Run with --debug flag for more information."

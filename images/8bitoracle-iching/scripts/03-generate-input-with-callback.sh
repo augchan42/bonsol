@@ -127,26 +127,35 @@ echo "Storing current Solana config..."
 ORIGINAL_KEYPAIR=$(solana config get | grep "Keypair Path" | awk '{print $3}')
 echo "Original keypair: $ORIGINAL_KEYPAIR"
 
-# Fund the payer account if needed
+# Check payer balance and handle airdrop if needed
 echo "Checking payer account balance..."
 PAYER_BALANCE_SOL=$(solana balance "$PAYER" | awk '{print $1}')
 PAYER_BALANCE=$(echo "$PAYER_BALANCE_SOL * 1000000000" | bc | cut -d'.' -f1)
 
 if [ -z "$PAYER_BALANCE" ] || [ "$PAYER_BALANCE" -lt "$MINIMUM_LAMPORTS" ]; then
-  echo "Funding payer account with $FUNDING_AMOUNT SOL using default keypair..."
+  echo "Payer balance too low, attempting to airdrop 10 SOL..."
   
-  # Check default keypair balance
-  DEFAULT_BALANCE_SOL=$(solana balance | awk '{print $1}')
-  if [ -z "$DEFAULT_BALANCE_SOL" ] || [ "$DEFAULT_BALANCE_SOL" = "0" ]; then
-    echo "Error: Default keypair has no SOL. Please fund it first."
+  # Get current cluster
+  CLUSTER=$(solana config get | grep "RPC URL" | awk '{print $3}')
+  if [[ "$CLUSTER" == *"mainnet"* ]]; then
+    echo "Error: Insufficient funds on mainnet. Please fund payer account manually."
     exit 1
   fi
   
-  echo "Default keypair balance: $DEFAULT_BALANCE_SOL SOL"
-  if ! solana transfer --allow-unfunded-recipient "$PAYER" "$FUNDING_AMOUNT"; then
-    echo "Error: Failed to fund payer account"
-    exit 1
-  fi
+  # Try airdrop up to 3 times
+  for i in {1..3}; do
+    if solana airdrop 10 "$PAYER"; then
+      echo "Airdrop successful!"
+      break
+    else
+      if [ $i -eq 3 ]; then
+        echo "Error: Airdrop failed after 3 attempts. Please fund account manually or try again later."
+        exit 1
+      fi
+      echo "Airdrop attempt $i failed. Retrying..."
+      sleep 2
+    fi
+  done
   
   # Verify funding was successful
   PAYER_BALANCE_SOL=$(solana balance "$PAYER" | awk '{print $1}')
@@ -402,8 +411,8 @@ jq -n \
   --arg executionId "$EXECUTION_ID" \
   --arg randomSeed "$RANDOM_SEED" \
   --arg programId "$CALLBACK_PROGRAM_ID" \
-  --arg executionPda "$EXECUTION_PDA" \
   --arg hexagramPda "$HEXAGRAM_PDA" \
+  --arg systemProgram "11111111111111111111111111111111" \
   --arg deploymentPda "$DEPLOYMENT_PDA" \
   --arg maxBlockHeight "$MAX_BLOCK_HEIGHT" \
   --argjson devMode "$DEV_MODE" \
@@ -435,7 +444,12 @@ jq -n \
           "isWritable": true
         },
         {
-          "pubkey": "11111111111111111111111111111111",
+          "pubkey": $systemProgram,
+          "isSigner": false,
+          "isWritable": false
+        },
+        {
+          "pubkey": $deploymentPda,
           "isSigner": false,
           "isWritable": false
         }
