@@ -340,217 +340,174 @@ impl TransactionSender for RpcTransactionSender {
         exit_code_system: u32,
         exit_code_user: u32,
     ) -> Result<Signature> {
-        info!("Step 4/7: Submit Proof [Prover]");
-        info!("🔍 Transaction Construction:");
-        info!("Requester Account: {}", requester_account);
-        info!("Signer Account (Prover): {}", self.signer.pubkey());
+        debug!("📦 Proof Data Analysis:");
+        debug!("Proof length: {} bytes", proof.len());
+        debug!("Execution digest length: {} bytes", execution_digest.len());
+        debug!("Input digest length: {} bytes", input_digest.len());
+        debug!("Assumption digest length: {} bytes", assumption_digest.len());
+        debug!("Committed outputs length: {} bytes", committed_outputs.len());
+        debug!("First 32 bytes of committed outputs: {:02x?}", &committed_outputs[..32.min(committed_outputs.len())]);
         
-        let dev_mode = std::env::var("RISC0_DEV_MODE").is_ok();
-        if dev_mode {
-            info!("⚠️ Running in RISC0_DEV_MODE - using simplified proof verification");
-        }
-        
-        let (execution_request_data_account, _) =
-            execution_address(&requester_account, execution_id.as_bytes());
-        info!("Status: Checking execution account: {}", execution_request_data_account);
-        
-        // Verify execution account exists before proceeding
-        match self.rpc_client.get_account(&execution_request_data_account).await {
-            Ok(_) => info!("✓ Execution account found and verified"),
-            Err(e) => {
-                error!("❌ Execution account not found or inaccessible");
-                error!("Account: {}", execution_request_data_account);
-                error!("Error: {:?}", e);
-                return Err(anyhow::anyhow!("Execution account not found: {}", e));
+        if let Some(marker_pos) = committed_outputs.iter().position(|&x| x == 0xaa) {
+            debug!("Found marker 0xAA at position {}", marker_pos);
+            if committed_outputs.len() >= marker_pos + 7 {
+                let line_values = &committed_outputs[marker_pos + 1..marker_pos + 7];
+                debug!("Line values: {:02x?}", line_values);
+                debug!("Line values valid: {}", line_values.iter().all(|&x| (6..=9).contains(&x)));
+                
+                if committed_outputs.len() > marker_pos + 7 {
+                    let ascii_art = String::from_utf8_lossy(&committed_outputs[marker_pos + 7..]);
+                    debug!("ASCII art length: {} bytes", ascii_art.len());
+                    debug!("ASCII art content:\n{}", ascii_art);
+                }
+            } else {
+                debug!("❌ Insufficient data after marker: {} bytes", committed_outputs.len() - marker_pos);
             }
-        }
-        
-        // Use original account structure but with enhanced logging
-        let (program_id, mut accounts) = if let Some(ref pe) = callback_exec {
-            info!("Status: Setting up callback configuration");
-            info!("Using callback program: {}", pe.program_id);
-            info!("Additional accounts provided: {}", additional_accounts.len());
-            for (i, acc) in additional_accounts.iter().enumerate() {
-                info!("Additional Account {}: {}", i, acc.pubkey);
-                info!("  Is Signer: {}", acc.is_signer);
-                info!("  Is Writable: {}", acc.is_writable);
-            }
-            (pe.program_id, additional_accounts)
         } else {
-            info!("Status: No callback program specified");
+            debug!("❌ No 0xAA marker found in committed outputs");
+            debug!("Full committed outputs: {:02x?}", committed_outputs);
+        }
+
+        // Create FlatBuffer for status
+        debug!("\n🔧 Building Status FlatBuffer");
+        let mut builder = FlatBufferBuilder::new();
+        
+        // Create vectors for byte arrays
+        let proof_vec = builder.create_vector(proof);
+        let execution_digest_vec = builder.create_vector(execution_digest);
+        let input_digest_vec = builder.create_vector(input_digest);
+        let assumption_digest_vec = builder.create_vector(assumption_digest);
+        let committed_outputs_vec = builder.create_vector(committed_outputs);
+        
+        debug!("Created FlatBuffer vectors:");
+        debug!("- Proof: {} bytes", proof.len());
+        debug!("- Execution digest: {} bytes", execution_digest.len());
+        debug!("- Input digest: {} bytes", input_digest.len());
+        debug!("- Assumption digest: {} bytes", assumption_digest.len());
+        debug!("- Committed outputs: {} bytes", committed_outputs.len());
+
+        // Create execution_id string
+        let execution_id_str = builder.create_string(execution_id);
+
+        let status = StatusV1Args {
+            execution_id: Some(execution_id_str),
+            status: StatusTypes::Completed,
+            exit_code_system,
+            exit_code_user,
+            proof: Some(proof_vec),
+            execution_digest: Some(execution_digest_vec),
+            input_digest: Some(input_digest_vec),
+            assumption_digest: Some(assumption_digest_vec),
+            committed_outputs: Some(committed_outputs_vec),
+        };
+        
+        let status_offset = StatusV1::create(&mut builder, &status);
+        builder.finish(status_offset, None);
+        let status_data = builder.finished_data();
+        
+        debug!("\n📋 Final Status Data:");
+        debug!("Total size: {} bytes", status_data.len());
+        debug!("First 32 bytes: {:02x?}", &status_data[..32.min(status_data.len())]);
+
+        // Get program ID and create instruction data
+        let (program_id, instruction_prefix) = if let Some(ref pe) = callback_exec {
+            debug!("\n🔑 Using callback configuration:");
+            debug!("Program ID: {}", pe.program_id);
+            debug!("Instruction prefix: {:?}", pe.instruction_prefix);
+            (pe.program_id, pe.instruction_prefix.clone())
+        } else {
+            debug!("\n🔑 Using default Bonsol program");
             (self.bonsol_program, vec![])
         };
 
-        info!("\nStatus: Building standard accounts");
-        info!("1. Requester Account: {}", requester_account);
-        info!("   Is Signer: true, Is Writable: true");
-        info!("2. Execution Account: {}", execution_request_data_account);
-        info!("   Is Signer: false, Is Writable: true");
-        info!("3. Callback Program: {}", program_id);
-        info!("   Is Signer: false, Is Writable: false");
-        info!("4. Prover Account: {}", self.signer.pubkey());
-        info!("   Is Signer: true, Is Writable: true");
+        // Create instruction data
+        let mut instruction_data = instruction_prefix.clone();
+        instruction_data.extend_from_slice(status_data);
+        
+        debug!("\n📝 Final Instruction Data:");
+        debug!("Prefix length: {} bytes", instruction_prefix.len());
+        debug!("Total length: {} bytes", instruction_data.len());
+        debug!("First 32 bytes: {:02x?}", &instruction_data[..32.min(instruction_data.len())]);
 
-        // Create standard accounts vector with correct permissions
-        let mut standard_accounts = vec![
-            AccountMeta::new(requester_account, true),
-            AccountMeta::new(execution_request_data_account, false),
-            AccountMeta::new_readonly(program_id, false),
+        // Get accounts
+        let execution_account = execution_address(&requester_account, execution_id.as_bytes()).0;
+        
+        debug!("\n👥 Account Configuration:");
+        debug!("Execution account: {}", execution_account);
+        debug!("Additional accounts: {}", additional_accounts.len());
+        for (i, acc) in additional_accounts.iter().enumerate() {
+            debug!("Account {}: {} (signer: {}, writable: {})", 
+                i, acc.pubkey, acc.is_signer, acc.is_writable);
+        }
+
+        // Create compute budget instructions
+        let compute_ixs = self.create_compute_budget_instructions().await?;
+        debug!("\n💻 Compute Budget Instructions: {}", compute_ixs.len());
+        
+        // Create rent funding instructions
+        let mut all_accounts = vec![
             AccountMeta::new(self.signer.pubkey(), true),
+            AccountMeta::new(execution_account, false),
         ];
+        all_accounts.extend(additional_accounts.iter().cloned());
+        
+        let rent_ixs = self.create_rent_funding_instructions(&all_accounts, &[0]).await?;
+        debug!("💰 Rent Funding Instructions: {}", rent_ixs.len());
 
-        info!("Status: Checking account funding requirements");
-        // Add extra accounts from callback if present
-        if let Some(ref pe) = callback_exec {
-            info!("Status: Adding callback extra accounts");
-            info!("Instruction prefix: {:?}", pe.instruction_prefix);
-            for (i, acc) in accounts.iter().enumerate() {
-                info!("Extra Account {}: {}", i, acc.pubkey);
-                info!("  Is Signer: {}", acc.is_signer);
-                info!("  Is Writable: {}", acc.is_writable);
-                
-                // Verify each account exists before proceeding
-                if acc.is_writable {
-                    info!("Status: Checking writable account {}", acc.pubkey);
-                    match self.rpc_client.get_account(&acc.pubkey).await {
-                        Ok(_) => info!("✓ Account {} exists", acc.pubkey),
-                        Err(e) => {
-                            error!("❌ Required account not found: {}", acc.pubkey);
-                            error!("Error: {:?}", e);
-                            return Err(anyhow::anyhow!("Required account not found: {}", e));
-                        }
-                    }
-                }
-            }
-            standard_accounts.extend(accounts);
-        }
+        // Build main instruction
+        let instruction = Instruction {
+            program_id,
+            accounts: all_accounts,
+            data: instruction_data,
+        };
 
-        // Log final account configuration
-        info!("\n📋 Final Account Configuration:");
-        for (i, acc) in standard_accounts.iter().enumerate() {
-            info!("Account {}: {}", i, acc.pubkey);
-            info!("  Is Signer: {}", acc.is_signer);
-            info!("  Is Writable: {}", acc.is_writable);
-            if acc.pubkey == system_program::id() {
-                info!("  Type: System Program");
-            } else if acc.pubkey == program_id {
-                info!("  Type: Program ID");
-            } else if acc.pubkey == self.signer.pubkey() {
-                info!("  Type: Signer");
-            } else if acc.pubkey == requester_account {
-                info!("  Type: Requester");
-            } else if acc.pubkey == execution_request_data_account {
-                info!("  Type: Execution Account");
-            } else {
-                info!("  Type: Additional Account");
-            }
-        }
+        // Combine all instructions
+        let mut instructions = Vec::new();
+        instructions.extend(compute_ixs);
+        instructions.extend(rent_ixs);
+        instructions.push(instruction);
+        
+        debug!("\n🚀 Final Transaction:");
+        debug!("Total instructions: {}", instructions.len());
+        debug!("Sending transaction...");
 
-        // Build compute budget instructions
-        info!("\nStatus: Building instructions");
-        let mut instructions = self.create_compute_budget_instructions().await?;
-        info!("Added {} compute budget instructions", instructions.len());
-        
-        // Add rent funding instructions if needed
-        if callback_exec.is_some() {
-            info!("Status: Adding rent funding instructions");
-            let rent_instructions = self.create_rent_funding_instructions(&standard_accounts, &[0, 0, 14, 0]).await?;
-            info!("Added {} rent funding instructions", rent_instructions.len());
-            instructions.extend(rent_instructions);
-        }
-
-        // Create the main instruction data
-        info!("\n🔧 Building Instruction Data:");
-        let mut fbb = FlatBufferBuilder::new();
-        info!("Creating instruction data vectors:");
-        info!("  Proof length: {} bytes", proof.len());
-        info!("  Execution digest length: {} bytes", execution_digest.len());
-        info!("  Input digest length: {} bytes", input_digest.len());
-        info!("  Assumption digest length: {} bytes", assumption_digest.len());
-        info!("  Committed outputs length: {} bytes", committed_outputs.len());
-        info!("  Execution ID: {}", execution_id);
-        
-        let proof_vec = fbb.create_vector(proof);
-        let execution_digest = fbb.create_vector(execution_digest);
-        let input_digest = fbb.create_vector(input_digest);
-        let assumption_digest = fbb.create_vector(assumption_digest);
-        let eid = fbb.create_string(execution_id);
-        let out = fbb.create_vector(committed_outputs);
-        
-        info!("Creating StatusV1 with:");
-        info!("  Status: Completed");
-        info!("  Exit codes - System: {}, User: {}", exit_code_system, exit_code_user);
-        
-        let stat = StatusV1::create(
-            &mut fbb,
-            &StatusV1Args {
-                execution_id: Some(eid),
-                status: StatusTypes::Completed,
-                proof: Some(proof_vec),
-                execution_digest: Some(execution_digest),
-                input_digest: Some(input_digest),
-                assumption_digest: Some(assumption_digest),
-                committed_outputs: Some(out),
-                exit_code_system,
-                exit_code_user,
-            },
-        );
-        fbb.finish(stat, None);
-        let statbytes = fbb.finished_data();
-        
-        let mut fbb2 = FlatBufferBuilder::new();
-        let off = fbb2.create_vector(statbytes);
-        let root = ChannelInstruction::create(
-            &mut fbb2,
-            &ChannelInstructionArgs {
-                ix_type: ChannelInstructionIxType::StatusV1,
-                status_v1: Some(off),
-                ..Default::default()
-            },
-        );
-        fbb2.finish(root, None);
-        let ix_data = fbb2.finished_data();
-
-        // Add main instruction
-        instructions.push(Instruction::new_with_bytes(self.bonsol_program, ix_data, standard_accounts));
-        
-        info!("\n📋 Final Transaction Summary:");
-        for (i, ix) in instructions.iter().enumerate() {
-            info!("Instruction {}:", i);
-            info!("  Program ID: {}", ix.program_id);
-            info!("  Number of accounts: {}", ix.accounts.len());
-        }
-
-        info!("\nStatus: Preparing to submit proof transaction");
-        if dev_mode {
-            info!("Dev Mode: Using simplified proof data structures");
-        }
-        
-        let (blockhash, last_valid) = self
+        // Send transaction
+        let (blockhash, last_valid_block_height) = self
             .rpc_client
-            .get_latest_blockhash_with_commitment(self.rpc_client.commitment())
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to get blockhash: {:?}", e))?;
-
-        let msg = v0::Message::try_compile(&self.signer.pubkey(), &instructions, &[], blockhash)?;
-        let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[&self.signer])?;
+            .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
+            .await?;
 
         let sig = self
             .rpc_client
-            .send_and_confirm_transaction_with_spinner_and_config(
-                &tx,
-                CommitmentConfig::confirmed(),
+            .send_transaction_with_config(
+                &VersionedTransaction::try_new(
+                    VersionedMessage::V0(v0::Message::try_compile(
+                        &self.signer.pubkey(),
+                        &instructions,
+                        &[],
+                        blockhash,
+                    )?),
+                    &[&self.signer],
+                )?,
                 RpcSendTransactionConfig {
                     skip_preflight: true,
+                    preflight_commitment: Some(CommitmentConfig::processed().commitment),
+                    max_retries: Some(5),
                     ..Default::default()
                 },
             )
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to send transaction: {:?}", e))?;
+            .map_err(|e| {
+                error!("Transaction failed: {:?}", e);
+                if let Some(code) = extract_custom_error(&e) {
+                    error!("Custom program error code: 0x{:x}", code);
+                }
+                anyhow::anyhow!("Failed to send transaction: {:?}", e)
+            })?;
             
         info!("Transaction sent successfully: {}", sig);
-        
-        self.sigs.insert(sig, TransactionStatus::Pending { expiry: last_valid });
+        self.sigs
+            .insert(sig, TransactionStatus::Pending { expiry: last_valid_block_height });
         Ok(sig)
     }
 

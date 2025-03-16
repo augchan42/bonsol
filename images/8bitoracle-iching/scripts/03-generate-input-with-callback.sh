@@ -228,8 +228,8 @@ check_npm_deps "$SCRIPTS_DIR"
 cd "$SCRIPTS_DIR"
 
 # Run ts-node and capture stdout and stderr separately
-PDA_INFO_ERR=$(ts-node derive-pda.ts "$CALLBACK_PROGRAM_ID" "$REQUESTER" "$BONSOL_PROGRAM_ID" "$IMAGE_ID" "$EXECUTION_ID" 2>&1 >/dev/null)
-PDA_INFO=$(ts-node derive-pda.ts "$CALLBACK_PROGRAM_ID" "$REQUESTER" "$BONSOL_PROGRAM_ID" "$IMAGE_ID" "$EXECUTION_ID" 2>/dev/null)
+PDA_INFO_ERR=$(ts-node derive-pda.ts "$CALLBACK_PROGRAM_ID" "$REQUESTER" "$BONSOL_PROGRAM_ID" "$EXECUTION_ID" "$IMAGE_ID" 2>&1 >/dev/null)
+PDA_INFO=$(ts-node derive-pda.ts "$CALLBACK_PROGRAM_ID" "$REQUESTER" "$BONSOL_PROGRAM_ID" "$EXECUTION_ID" "$IMAGE_ID" 2>/dev/null)
 DERIVE_EXIT=$?
 
 # Return to original directory
@@ -435,6 +435,7 @@ jq -n \
   --arg deploymentPda "$DEPLOYMENT_PDA" \
   --arg maxBlockHeight "$MAX_BLOCK_HEIGHT" \
   --arg executionPda "$EXECUTION_PDA" \
+  --arg bonsolProgram "BoNsHRcyLLNdtnoDf8hiCNZpyehMC4FDMxs6NTxFi3ew" \
   --argjson devMode "$DEV_MODE" \
   '{
     "timestamp": ($timestamp | tonumber),
@@ -459,6 +460,11 @@ jq -n \
       "programId": $programId,
       "instructionPrefix": [0],
       "extraAccounts": [
+        {
+          "pubkey": $bonsolProgram,
+          "isSigner": false,
+          "isWritable": false
+        },
         {
           "pubkey": $hexagramPda,
           "isSigner": false,

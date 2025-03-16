@@ -290,10 +290,12 @@ echo "Note: Bonsol prepends these accounts: requester(0), execution(1), callback
 echo "Extra accounts start at index 4:"
 
 # Get and validate the account configuration
-HEXAGRAM_PDA=$(jq -r '.callbackConfig.extraAccounts[0].pubkey' "$INPUT_PATH")
-SYSTEM_PROGRAM=$(jq -r '.callbackConfig.extraAccounts[1].pubkey' "$INPUT_PATH")
-DEPLOYMENT_PDA=$(jq -r '.callbackConfig.extraAccounts[2].pubkey' "$INPUT_PATH")
+PROVER_ACCOUNT=$(jq -r '.callbackConfig.extraAccounts[0].pubkey' "$INPUT_PATH")
+HEXAGRAM_PDA=$(jq -r '.callbackConfig.extraAccounts[1].pubkey' "$INPUT_PATH")
+SYSTEM_PROGRAM=$(jq -r '.callbackConfig.extraAccounts[2].pubkey' "$INPUT_PATH")
+DEPLOYMENT_PDA=$(jq -r '.callbackConfig.extraAccounts[3].pubkey' "$INPUT_PATH")
 
+echo "- Prover Account (account[3]): $PROVER_ACCOUNT"
 echo "- Hexagram Account (account[4]): $HEXAGRAM_PDA"
 if [ "$SYSTEM_PROGRAM" != "11111111111111111111111111111111" ]; then
     echo "Error: System Program account (account[5]) must be 11111111111111111111111111111111"
@@ -302,6 +304,13 @@ if [ "$SYSTEM_PROGRAM" != "11111111111111111111111111111111" ]; then
 fi
 echo "- System Program (account[5]): $SYSTEM_PROGRAM"
 echo "- Deployment Account (account[6]): $DEPLOYMENT_PDA"
+
+# Validate Prover Account is Bonsol Program
+if [ "$PROVER_ACCOUNT" != "BoNsHRcyLLNdtnoDf8hiCNZpyehMC4FDMxs6NTxFi3ew" ]; then
+    echo "Error: Prover Account must be the Bonsol Program (BoNsHRcyLLNdtnoDf8hiCNZpyehMC4FDMxs6NTxFi3ew)"
+    echo "Got: $PROVER_ACCOUNT"
+    exit 1
+fi
 
 echo "Account configuration verified ✓"
 echo "----------------------------------------"
@@ -352,9 +361,11 @@ echo "Using execution PDA: $EXECUTION_PDA"
 EXEC_PDA_BALANCE=$(solana balance "$EXECUTION_PDA" | awk '{print $1}')
 echo "Current execution PDA balance: $EXEC_PDA_BALANCE SOL"
 
-if (($(echo "$EXEC_PDA_BALANCE < 0.1" | bc -l))); then
-    echo "Execution PDA balance low, transferring 0.1 SOL from payer..."
-    if ! solana transfer --allow-unfunded-recipient "$EXECUTION_PDA" 0.1 --keypair "$BONSOL_PAYER_KEYPAIR"; then
+# Minimum balance needed: 0.008178 SOL for hexagram rent + 0.1 SOL buffer for fees
+MIN_BALANCE=0.11
+if (($(echo "$EXEC_PDA_BALANCE < $MIN_BALANCE" | bc -l))); then
+    echo "Execution PDA balance low, transferring $MIN_BALANCE SOL from payer..."
+    if ! solana transfer --allow-unfunded-recipient "$EXECUTION_PDA" "$MIN_BALANCE" --keypair "$BONSOL_PAYER_KEYPAIR"; then
         echo "Error: Failed to transfer SOL to execution PDA"
         exit 1
     fi
@@ -364,7 +375,7 @@ if (($(echo "$EXEC_PDA_BALANCE < 0.1" | bc -l))); then
     NEW_EXEC_PDA_BALANCE=$(solana balance "$EXECUTION_PDA" | awk '{print $1}')
     echo "New execution PDA balance: $NEW_EXEC_PDA_BALANCE SOL"
     
-    if (($(echo "$NEW_EXEC_PDA_BALANCE < 0.1" | bc -l))); then
+    if (($(echo "$NEW_EXEC_PDA_BALANCE < $MIN_BALANCE" | bc -l))); then
         echo "Error: Execution PDA balance still too low after transfer"
         exit 1
     fi

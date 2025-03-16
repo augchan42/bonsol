@@ -113,6 +113,30 @@ pub fn process_instruction(
     msg!("\n🔍 Attempting handle_callback");
     msg!("Using execution account at index 1: {}", accounts[1].key);
     
+    // Add detailed data inspection
+    msg!("\n📝 Analyzing stripped data:");
+    msg!("Data length: {} bytes", stripped_data.len());
+    msg!("First 32 bytes: {:02x?}", &stripped_data[..32.min(stripped_data.len())]);
+    if stripped_data.len() > 32 {
+        msg!("Next 32 bytes: {:02x?}", &stripped_data[32..64.min(stripped_data.len())]);
+    }
+    
+    // Log account details that handle_callback will use
+    msg!("\n📝 Account details for handle_callback:");
+    msg!("Image ID: {}", BITORACLE_ICHING_IMAGE_ID);
+    msg!("Execution account: {}", accounts[1].key);
+    msg!("Number of accounts: {}", accounts.len());
+    for (i, acc) in accounts.iter().enumerate() {
+        msg!("Account {}: {} (owner: {})", i, acc.key, acc.owner);
+        msg!("  Data length: {} bytes", acc.data_len());
+        if acc.data_len() > 0 {
+            let data_preview: Vec<u8> = acc.try_borrow_data()
+                .map(|data| data[..32.min(acc.data_len())].to_vec())
+                .unwrap_or_default();
+            msg!("  First 32 bytes of data: {:02x?}", data_preview);
+        }
+    }
+    
     // Process callback data
     let callback_data: BonsolCallback = match handle_callback(
         BITORACLE_ICHING_IMAGE_ID,
@@ -124,10 +148,18 @@ pub fn process_instruction(
             msg!("✓ handle_callback successful");
             msg!("Input digest length: {} bytes", data.input_digest.len());
             msg!("Committed outputs length: {} bytes", data.committed_outputs.len());
+            msg!("Input digest: {:02x?}", data.input_digest);
+            msg!("First 32 bytes of committed outputs: {:02x?}", 
+                &data.committed_outputs[..32.min(data.committed_outputs.len())]);
             data
         }
         Err(e) => {
             msg!("❌ handle_callback failed: {:?}", e);
+            msg!("This usually means either:");
+            msg!("1. Image ID mismatch");
+            msg!("2. Invalid execution account");
+            msg!("3. Invalid data format");
+            msg!("4. Missing or invalid accounts");
             return Err(e);
         }
     };
@@ -183,34 +215,29 @@ pub fn process_instruction(
     msg!("\n🔍 Processing Committed Outputs");
     let outputs = &callback_data.committed_outputs;
     msg!("Output size: {} bytes", outputs.len());
-    msg!("Expected size: 86 bytes");
-    
-    // Validate output size
-    if outputs.len() != 86 {
-        msg!("❌ Invalid output size");
-        msg!("Expected: 86 bytes");
-        msg!("Got: {} bytes", outputs.len());
-        return Err(CallbackError::InvalidHexagramData.into());
+    msg!("Expected size: 54 bytes"); // 1 marker + 6 line values + 47 ASCII art
+    msg!("First byte (marker): 0x{:02x}", outputs[0]);
+    if outputs.len() > 1 {
+        msg!("Line values: {:02x?}", &outputs[1..7]);
+        if outputs.len() > 7 {
+            msg!("ASCII art bytes: {:02x?}", &outputs[7..]);
+        }
     }
     
-    // Validate input digest
-    msg!("\n🔍 Validating Input Digest");
-    msg!("Expected digest length: 32 bytes");
-    msg!("Actual digest length: {} bytes", callback_data.input_digest.len());
-    
-    if &outputs[..32] != callback_data.input_digest {
-        msg!("❌ Input digest mismatch");
-        msg!("Expected: {:?}", callback_data.input_digest);
-        msg!("Got: {:?}", &outputs[..32]);
+    // Validate output size
+    if outputs.len() != 54 {
+        msg!("❌ Invalid output size");
+        msg!("Expected: 54 bytes");
+        msg!("Got: {} bytes", outputs.len());
         return Err(CallbackError::InvalidHexagramData.into());
     }
     
     // Validate marker
     msg!("\n🔍 Validating Marker");
     msg!("Expected marker: 0xaa");
-    msg!("Got marker: 0x{:02x}", outputs[32]);
+    msg!("Got marker: 0x{:02x}", outputs[0]);
     
-    if outputs[32] != 0xaa {
+    if outputs[0] != 0xaa {
         msg!("❌ Invalid marker");
         return Err(CallbackError::InvalidHexagramData.into());
     }
@@ -218,9 +245,13 @@ pub fn process_instruction(
     // Process line values
     msg!("\n🔍 Processing Line Values");
     let mut lines = [0u8; 6];
-    lines.copy_from_slice(&outputs[33..39]);
+    lines.copy_from_slice(&outputs[1..7]);
     
     msg!("Line values: {:?}", lines);
+    msg!("Validating each line is between 6 and 9");
+    for (i, &line) in lines.iter().enumerate() {
+        msg!("Line {}: {} - {}", i + 1, line, (6..=9).contains(&line));
+    }
     let valid_lines = lines.iter().all(|&x| (6..=9).contains(&x));
     
     if !valid_lines {
@@ -231,7 +262,7 @@ pub fn process_instruction(
     }
     
     // Process ASCII art
-    let ascii_art = String::from_utf8_lossy(&outputs[39..]).to_string();
+    let ascii_art = String::from_utf8_lossy(&outputs[7..]).to_string();
     msg!("\n🔍 ASCII Art Validation");
     msg!("ASCII art length: {} bytes", ascii_art.len());
     msg!("ASCII art content:\n{}", ascii_art);
