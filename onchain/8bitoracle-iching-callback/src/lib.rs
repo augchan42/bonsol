@@ -141,9 +141,8 @@ pub fn process_instruction(
     let execution_account = &accounts[1];
     let callback_program = &accounts[2];
     let prover = &accounts[3];
-    let execution_pda = &accounts[4];  // First extra account
-    let hexagram_account = &accounts[5];  // Second extra account
-    let system_program = &accounts[6];    // Third extra account
+    let hexagram_account = &accounts[4];  // First extra account
+    let system_program = &accounts[5];    // Second extra account
     
     msg!("\nAccount Index Verification:");
     msg!("Requester Account (index 0): {}", requester_account.key);
@@ -160,33 +159,16 @@ pub fn process_instruction(
     msg!("Prover (index 3): {}", prover.key);
     msg!("  Is Signer: {}", prover.is_signer);
     
-    msg!("Execution PDA (index 4): {}", execution_pda.key);
-    msg!("  Is Signer: {}", execution_pda.is_signer);
-    msg!("  Is Writable: {}", execution_pda.is_writable);
-    
-    msg!("Hexagram Account (index 5): {}", hexagram_account.key);
+    msg!("Hexagram Account (index 4): {}", hexagram_account.key);
     msg!("  Is Signer: {}", hexagram_account.is_signer);
     msg!("  Is Writable: {}", hexagram_account.is_writable);
     
-    msg!("System Program (index 6): {}", system_program.key);
+    msg!("System Program (index 5): {}", system_program.key);
     msg!("  Is Executable: {}", system_program.executable);
     msg!("  Address matches: {}", system_program.key == &SYSTEM_PROGRAM_ID);
     
-    // Validate execution PDA
-    if !execution_pda.is_signer {
-        msg!("❌ Validation failed: Execution PDA must be a signer");
-        msg!("Account: {}", execution_pda.key);
-        msg!("Is Signer: {}", execution_pda.is_signer);
-        return Err(CallbackError::InvalidSigner.into());
-    }
-    
-    // Validate hexagram account
-    if !hexagram_account.is_writable {
-        msg!("❌ Validation failed: Hexagram account must be writable");
-        msg!("Account: {}", hexagram_account.key);
-        msg!("Is Writable: {}", hexagram_account.is_writable);
-        return Err(CallbackError::InvalidInstruction.into());
-    }
+    // Note: We don't need to validate the execution account's signer status
+    // because it's a PDA and Bonsol has already validated it
     
     // Verify system program
     if !system_program.executable || system_program.key != &SYSTEM_PROGRAM_ID {

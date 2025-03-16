@@ -268,81 +268,99 @@ impl TransactionSender for RpcTransactionSender {
         exit_code_system: u32,
         exit_code_user: u32,
     ) -> Result<Signature> {
-        let (execution_request_data_account, _) =
-            execution_address(&requester_account, execution_id.as_bytes());
-        
         info!("🔍 Transaction Construction:");
         info!("Requester Account: {}", requester_account);
-        info!("Execution Request Account: {}", execution_request_data_account);
-        if let Some(ref pe) = callback_exec {
-            info!("Callback Program ID: {}", pe.program_id);
-        }
+        info!("Signer Account (Prover): {}", self.signer.pubkey());
         
-        // Handle callback accounts first
+        let (execution_request_data_account, _) =
+            execution_address(&requester_account, execution_id.as_bytes());
+        info!("Execution Request Account: {}", execution_request_data_account);
+        
+        // Use original account structure but with logging
         let (program_id, mut accounts) = if let Some(ref pe) = callback_exec {
-            let prog = pe.program_id;
-            info!("Using callback program: {}", prog);
-            //todo: add read interface simulation on program to get other accounts
-            (prog, additional_accounts.clone())
+            info!("Using callback program: {}", pe.program_id);
+            info!("Additional accounts provided: {}", additional_accounts.len());
+            for (i, acc) in additional_accounts.iter().enumerate() {
+                info!("Additional Account {}: {}", i, acc.pubkey);
+                info!("  Is Signer: {}", acc.is_signer);
+                info!("  Is Writable: {}", acc.is_writable);
+            }
+            (pe.program_id, additional_accounts)
         } else {
             info!("No callback program specified");
             (self.bonsol_program, vec![])
         };
 
-        info!("\n📋 Initial Additional Accounts:");
-        for (i, acc) in additional_accounts.iter().enumerate() {
-            info!("Account {}: {}", i, acc.pubkey);
-            info!("  Is Signer: {}", acc.is_signer);
-            info!("  Is Writable: {}", acc.is_writable);
-        }
+        info!("\n🔍 Building Standard Accounts:");
+        info!("1. Requester Account: {}", requester_account);
+        info!("   Is Signer: true, Is Writable: true");
+        info!("2. Execution Account: {}", execution_request_data_account);
+        info!("   Is Signer: false, Is Writable: true");
+        info!("3. Callback Program: {}", program_id);
+        info!("   Is Signer: false, Is Writable: false");
+        info!("4. Prover Account: {}", self.signer.pubkey());
+        info!("   Is Signer: true, Is Writable: true");
 
-        // Prepend the standard accounts in the correct order for the Bonsol program
-        info!("\n📋 Prepending Standard Accounts:");
-        let standard_accounts = vec![
-            AccountMeta::new(requester_account, true),                    // Requester account (signer + writable)
-            AccountMeta::new(execution_request_data_account, false),      // Execution request account
-            AccountMeta::new_readonly(program_id, false),                 // Callback program
-            AccountMeta::new(self.signer.pubkey(), true),                // Prover account (signer)
+        // Create standard accounts vector with correct permissions
+        let mut standard_accounts = vec![
+            AccountMeta::new(requester_account, true),  // Requester as signer and writable
+            AccountMeta::new(execution_request_data_account, false), // Execution account as writable but not signer
+            AccountMeta::new_readonly(program_id, false), // Callback program as readonly
+            AccountMeta::new(self.signer.pubkey(), true), // Prover as signer and writable
         ];
-        
-        for (i, acc) in standard_accounts.iter().enumerate() {
-            info!("Standard Account {}: {}", i, acc.pubkey);
-            info!("  Is Signer: {}", acc.is_signer);
-            info!("  Is Writable: {}", acc.is_writable);
-        }
-        
-        // Insert standard accounts at the beginning
-        accounts.splice(0..0, standard_accounts);
 
-        info!("\n📋 Final Account List:");
-        for (i, acc) in accounts.iter().enumerate() {
+        // Add extra accounts from callback if present
+        if let Some(ref pe) = callback_exec {
+            info!("\n🔍 Adding Callback Extra Accounts:");
+            info!("Instruction prefix: {:?}", pe.instruction_prefix);
+            for (i, acc) in accounts.iter().enumerate() {
+                info!("Extra Account {}: {}", i, acc.pubkey);
+                info!("  Is Signer: {}", acc.is_signer);
+                info!("  Is Writable: {}", acc.is_writable);
+            }
+            standard_accounts.extend(accounts);
+        }
+
+        info!("\n📋 Final Account Configuration:");
+        for (i, acc) in standard_accounts.iter().enumerate() {
             info!("Account {}: {}", i, acc.pubkey);
             info!("  Is Signer: {}", acc.is_signer);
             info!("  Is Writable: {}", acc.is_writable);
+            if acc.pubkey == requester_account {
+                info!("  Role: Requester");
+            } else if acc.pubkey == execution_request_data_account {
+                info!("  Role: Execution Account");
+            } else if acc.pubkey == program_id {
+                info!("  Role: Callback Program");
+            } else if acc.pubkey == self.signer.pubkey() {
+                info!("  Role: Prover");
+            } else {
+                info!("  Role: Extra Account");
+            }
+        }
+
+        // Build compute budget instructions
+        info!("\n🔧 Building Instructions:");
+        let mut instructions = self.create_compute_budget_instructions().await?;
+        info!("Added {} compute budget instructions", instructions.len());
+        
+        // Add rent funding instructions if needed
+        if callback_exec.is_some() {
+            info!("Adding rent funding instructions");
+            let rent_instructions = self.create_rent_funding_instructions(&standard_accounts, &[0, 0, 14, 0]).await?;
+            info!("Added {} rent funding instructions", rent_instructions.len());
+            instructions.extend(rent_instructions);
         }
 
         // Create the main instruction data
         info!("\n🔧 Building Instruction Data:");
-        info!("Execution ID: {}", execution_id);
-        info!("Proof length: {} bytes", proof.len());
-        info!("Execution digest length: {} bytes", execution_digest.len());
-        info!("Input digest length: {} bytes", input_digest.len());
-        info!("Assumption digest length: {} bytes", assumption_digest.len());
-        info!("Committed outputs length: {} bytes", committed_outputs.len());
-        info!("Exit codes - System: {}, User: {}", exit_code_system, exit_code_user);
-        
-        // Create first FlatBuffer for StatusV1
         let mut fbb = FlatBufferBuilder::new();
-        
-        // 1. Create all vectors first in consistent order
         let proof_vec = fbb.create_vector(proof);
         let execution_digest = fbb.create_vector(execution_digest);
         let input_digest = fbb.create_vector(input_digest);
         let assumption_digest = fbb.create_vector(assumption_digest);
         let eid = fbb.create_string(execution_id);
         let out = fbb.create_vector(committed_outputs);
-        
-        // 2. Create StatusV1 table with all vectors
         let stat = StatusV1::create(
             &mut fbb,
             &StatusV1Args {
@@ -357,15 +375,9 @@ impl TransactionSender for RpcTransactionSender {
                 exit_code_user,
             },
         );
-        
-        // 3. Finish StatusV1 as a nested buffer
         fbb.finish(stat, None);
         let statbytes = fbb.finished_data();
         
-        info!("Status bytes length: {} bytes", statbytes.len());
-        debug!("Status bytes: {:?}", statbytes);
-        
-        // Create second FlatBuffer for ChannelInstruction
         let mut fbb2 = FlatBufferBuilder::new();
         let off = fbb2.create_vector(statbytes);
         let root = ChannelInstruction::create(
@@ -376,73 +388,28 @@ impl TransactionSender for RpcTransactionSender {
                 ..Default::default()
             },
         );
-        
-        // Finish ChannelInstruction as a root type
         fbb2.finish(root, None);
         let ix_data = fbb2.finished_data();
 
-        info!("Final instruction data length: {} bytes", ix_data.len());
-        debug!("Instruction data: {:?}", ix_data);
-
-        // Build all instructions
-        info!("\n🔧 Building Instructions:");
-        let mut instructions = self.create_compute_budget_instructions().await?;
-        info!("Added {} compute budget instructions", instructions.len());
-        
-        // Add rent funding instructions for callback accounts if needed
-        if callback_exec.is_some() {
-            info!("Adding rent funding instructions");
-            let rent_instructions = self.create_rent_funding_instructions(&accounts, &[0, 0, 14, 0]).await?;
-            info!("Added {} rent funding instructions", rent_instructions.len());
-            instructions.extend(rent_instructions);
-        }
-        
         // Add main instruction
-        info!("Adding main Bonsol instruction");
-        instructions.push(Instruction::new_with_bytes(self.bonsol_program, ix_data, accounts));
+        instructions.push(Instruction::new_with_bytes(self.bonsol_program, ix_data, standard_accounts));
         
         info!("\n📋 Final Transaction Summary:");
-        info!("Total instructions: {}", instructions.len());
         for (i, ix) in instructions.iter().enumerate() {
             info!("Instruction {}:", i);
             info!("  Program ID: {}", ix.program_id);
             info!("  Number of accounts: {}", ix.accounts.len());
-            info!("  Data length: {} bytes", ix.data.len());
         }
 
-        // Create and send transaction
-        info!("\n🚀 Preparing to send transaction");
-        let (blockhash_req, last_valid) = self
+        let (blockhash, last_valid) = self
             .rpc_client
             .get_latest_blockhash_with_commitment(self.rpc_client.commitment())
             .await
             .map_err(|e| anyhow::anyhow!("Failed to get blockhash: {:?}", e))?;
 
-        info!("Got blockhash: {}", blockhash_req);
-        info!("Last valid block: {}", last_valid);
-
-        // Log detailed instruction data
-        for (i, instruction) in instructions.iter().enumerate() {
-            info!("\n📝 Instruction {} Details:", i);
-            info!("Program ID: {}", instruction.program_id);
-            info!("Data length: {} bytes", instruction.data.len());
-            info!("Raw data: {:?}", instruction.data);
-            info!("\nAccounts:");
-            for (j, account) in instruction.accounts.iter().enumerate() {
-                info!("  Account {}: {}", j, account.pubkey);
-                info!("    Is Signer: {}", account.is_signer);
-                info!("    Is Writable: {}", account.is_writable);
-            }
-        }
-
-        let msg = v0::Message::try_compile(&self.signer.pubkey(), &instructions, &[], blockhash_req)?;
+        let msg = v0::Message::try_compile(&self.signer.pubkey(), &instructions, &[], blockhash)?;
         let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[&self.signer])?;
 
-        info!("\n📋 Final Transaction:");
-        info!("Number of instructions: {}", tx.message.instructions().len());
-        info!("Fee payer: {}", self.signer.pubkey());
-        info!("Recent blockhash: {}", blockhash_req);
-        
         let sig = self
             .rpc_client
             .send_and_confirm_transaction_with_spinner_and_config(
@@ -456,8 +423,7 @@ impl TransactionSender for RpcTransactionSender {
             .await
             .map_err(|e| anyhow::anyhow!("Failed to send transaction: {:?}", e))?;
             
-        info!("Transaction sent successfully");
-        info!("Signature: {}", sig);
+        info!("Transaction sent successfully: {}", sig);
         
         self.sigs.insert(sig, TransactionStatus::Pending { expiry: last_valid });
         Ok(sig)
