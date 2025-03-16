@@ -4,6 +4,10 @@
 set -e
 set -x  # Add debug tracing
 
+# Constants
+FUNDING_AMOUNT="1"
+MINIMUM_LAMPORTS=1000000000  # 1 SOL in lamports
+
 # Function to check if a command exists
 check_dependency() {
     if ! command -v "$1" &>/dev/null; then
@@ -101,6 +105,62 @@ if [ ! -f "$EXECUTION_KEYPAIR" ]; then
   echo "Error: Test execution keypair not found at $EXECUTION_KEYPAIR"
   exit 1
 fi
+
+# Create a separate payer keypair
+PAYER_KEYPAIR="$PROJECT_ROOT/onchain/8bitoracle-iching-callback/scripts/test-payer-keypair.json"
+if [ ! -f "$PAYER_KEYPAIR" ]; then
+  echo "Generating new payer keypair..."
+  solana-keygen new --no-bip39-passphrase -o "$PAYER_KEYPAIR"
+  echo "Generated new payer keypair at: $PAYER_KEYPAIR"
+fi
+
+# Get the public key of the payer
+PAYER=$(solana-keygen pubkey "$PAYER_KEYPAIR")
+if [ -z "$PAYER" ]; then
+  echo "Error: Could not get payer public key from keypair"
+  exit 1
+fi
+echo "Using payer: $PAYER"
+
+# Store current config
+echo "Storing current Solana config..."
+ORIGINAL_KEYPAIR=$(solana config get | grep "Keypair Path" | awk '{print $3}')
+echo "Original keypair: $ORIGINAL_KEYPAIR"
+
+# Fund the payer account if needed
+echo "Checking payer account balance..."
+PAYER_BALANCE_SOL=$(solana balance "$PAYER" | awk '{print $1}')
+PAYER_BALANCE=$(echo "$PAYER_BALANCE_SOL * 1000000000" | bc | cut -d'.' -f1)
+
+if [ -z "$PAYER_BALANCE" ] || [ "$PAYER_BALANCE" -lt "$MINIMUM_LAMPORTS" ]; then
+  echo "Funding payer account with $FUNDING_AMOUNT SOL using default keypair..."
+  
+  # Check default keypair balance
+  DEFAULT_BALANCE_SOL=$(solana balance | awk '{print $1}')
+  if [ -z "$DEFAULT_BALANCE_SOL" ] || [ "$DEFAULT_BALANCE_SOL" = "0" ]; then
+    echo "Error: Default keypair has no SOL. Please fund it first."
+    exit 1
+  fi
+  
+  echo "Default keypair balance: $DEFAULT_BALANCE_SOL SOL"
+  if ! solana transfer --allow-unfunded-recipient "$PAYER" "$FUNDING_AMOUNT"; then
+    echo "Error: Failed to fund payer account"
+    exit 1
+  fi
+  
+  # Verify funding was successful
+  PAYER_BALANCE_SOL=$(solana balance "$PAYER" | awk '{print $1}')
+  PAYER_BALANCE=$(echo "$PAYER_BALANCE_SOL * 1000000000" | bc | cut -d'.' -f1)
+  
+  if [ "$PAYER_BALANCE" -lt "$MINIMUM_LAMPORTS" ]; then
+    echo "Error: Payer account funding verification failed"
+    echo "Current balance: $PAYER_BALANCE lamports"
+    echo "Required minimum: $MINIMUM_LAMPORTS lamports"
+    exit 1
+  fi
+fi
+
+echo "Payer account funded successfully with $PAYER_BALANCE_SOL SOL"
 
 # Get the public key of the requester (execution keypair)
 REQUESTER=$(solana-keygen pubkey "$EXECUTION_KEYPAIR")
@@ -395,17 +455,17 @@ echo "  Storage Account: $STORAGE_PUBKEY"
 echo "  Prover Account: $PROVER_PUBKEY"
 echo "You can now run 04-execute.sh to execute the I Ching program"
 
-# Set Solana config and verify
-if ! solana config set --keypair "$EXECUTION_KEYPAIR"; then
+# Set Solana config to use the payer keypair
+if ! solana config set --keypair "$PAYER_KEYPAIR"; then
     echo "Error: Failed to set Solana config"
     exit 1
 fi
 
 # Verify config was set correctly
 CURRENT_KEYPAIR=$(solana config get | grep "Keypair Path" | awk '{print $3}')
-if [ "$CURRENT_KEYPAIR" != "$EXECUTION_KEYPAIR" ]; then
+if [ "$CURRENT_KEYPAIR" != "$PAYER_KEYPAIR" ]; then
     echo "Error: Solana config not set correctly"
-    echo "Expected: $EXECUTION_KEYPAIR"
+    echo "Expected: $PAYER_KEYPAIR"
     echo "Got: $CURRENT_KEYPAIR"
     exit 1
 fi

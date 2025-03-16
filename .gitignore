@@ -32,3 +32,5 @@ elf/
 verification_key.json
 program-keypair.json
 text-execution-keypair.json
+*-keypair.json
+

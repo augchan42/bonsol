@@ -159,47 +159,62 @@ if [ ! -f "$EXECUTION_KEYPAIR" ]; then
 fi
 echo "Using test execution keypair: $EXECUTION_KEYPAIR"
 
-# Set the default Solana keypair and verify
-if ! solana config set --keypair "$EXECUTION_KEYPAIR"; then
+# Get the test payer keypair path
+PAYER_KEYPAIR="$PROJECT_ROOT/onchain/8bitoracle-iching-callback/scripts/test-payer-keypair.json"
+if [ ! -f "$PAYER_KEYPAIR" ]; then
+    echo "Error: Test payer keypair not found at $PAYER_KEYPAIR"
+    exit 1
+fi
+echo "Using test payer keypair: $PAYER_KEYPAIR"
+
+# Store the original Solana config
+ORIGINAL_KEYPAIR=$(solana config get | grep "Keypair Path" | awk '{print $3}')
+echo "Original Solana keypair: $ORIGINAL_KEYPAIR"
+
+# Set the payer keypair as default and verify
+if ! solana config set --keypair "$PAYER_KEYPAIR"; then
     echo "Error: Failed to set Solana config"
     exit 1
 fi
 
 # Verify config was set correctly
 CURRENT_KEYPAIR=$(solana config get | grep "Keypair Path" | awk '{print $3}')
-if [ "$CURRENT_KEYPAIR" != "$EXECUTION_KEYPAIR" ]; then
+if [ "$CURRENT_KEYPAIR" != "$PAYER_KEYPAIR" ]; then
     echo "Error: Solana config not set correctly"
-    echo "Expected: $EXECUTION_KEYPAIR"
+    echo "Expected: $PAYER_KEYPAIR"
     echo "Got: $CURRENT_KEYPAIR"
     exit 1
 fi
-echo "Set default Solana keypair to: $EXECUTION_KEYPAIR"
+echo "Set default Solana keypair to: $PAYER_KEYPAIR"
 
-# Get the public key of the execution account
+# Get the public keys for both accounts
 EXECUTION_PUBKEY=$(solana-keygen pubkey "$EXECUTION_KEYPAIR")
-if [ -z "$EXECUTION_PUBKEY" ]; then
-    echo "Error: Could not get public key from keypair"
+PAYER_PUBKEY=$(solana-keygen pubkey "$PAYER_KEYPAIR")
+
+if [ -z "$EXECUTION_PUBKEY" ] || [ -z "$PAYER_PUBKEY" ]; then
+    echo "Error: Could not get public keys from keypairs"
     exit 1
 fi
 echo "Execution account public key: $EXECUTION_PUBKEY"
+echo "Payer account public key: $PAYER_PUBKEY"
 
-# Check balance and handle airdrop if needed
-BALANCE=$(solana balance "$EXECUTION_PUBKEY" | awk '{print $1}')
-echo "Current balance: $BALANCE SOL"
+# Check payer balance and handle airdrop if needed
+BALANCE=$(solana balance "$PAYER_PUBKEY" | awk '{print $1}')
+echo "Current payer balance: $BALANCE SOL"
 
 if (($(echo "$BALANCE < 1" | bc -l))); then
-    echo "Balance too low for execution"
+    echo "Payer balance too low for execution"
     
     # Get current cluster
     CLUSTER=$(solana config get | grep "RPC URL" | awk '{print $3}')
     if [[ "$CLUSTER" == *"mainnet"* ]]; then
-        echo "Error: Insufficient funds on mainnet. Please fund account manually."
+        echo "Error: Insufficient funds on mainnet. Please fund payer account manually."
         exit 1
     else
-        echo "Attempting to airdrop 2 SOL..."
+        echo "Attempting to airdrop 2 SOL to payer account..."
         # Try airdrop up to 3 times
         for i in {1..3}; do
-            if solana airdrop 2 "$EXECUTION_PUBKEY"; then
+            if solana airdrop 2 "$PAYER_PUBKEY"; then
                 echo "Airdrop successful!"
                 break
             else
@@ -213,17 +228,32 @@ if (($(echo "$BALANCE < 1" | bc -l))); then
         done
         
         # Verify new balance
-        NEW_BALANCE=$(solana balance "$EXECUTION_PUBKEY" | awk '{print $1}')
-        echo "New balance: $NEW_BALANCE SOL"
+        NEW_BALANCE=$(solana balance "$PAYER_PUBKEY" | awk '{print $1}')
+        echo "New payer balance: $NEW_BALANCE SOL"
         
         if (($(echo "$NEW_BALANCE < 1" | bc -l))); then
-            echo "Error: Balance still too low after airdrop. Please fund account manually."
+            echo "Error: Payer balance still too low after airdrop. Please fund account manually."
             exit 1
         fi
     fi
 fi
 
-echo "Balance check passed ✓"
+echo "Payer balance check passed ✓"
+
+# Also check execution account balance
+EXEC_BALANCE=$(solana balance "$EXECUTION_PUBKEY" | awk '{print $1}')
+echo "Current execution account balance: $EXEC_BALANCE SOL"
+
+if (($(echo "$EXEC_BALANCE < 0.1" | bc -l))); then
+    echo "Execution account balance low, transferring 0.1 SOL from payer..."
+    if ! solana transfer --allow-unfunded-recipient "$EXECUTION_PUBKEY" 0.1 --keypair "$PAYER_KEYPAIR"; then
+        echo "Error: Failed to transfer SOL to execution account"
+        exit 1
+    fi
+    echo "Transfer successful"
+fi
+
+echo "Execution account balance check passed ✓"
 echo "----------------------------------------"
 
 echo "----------------------------------------"
@@ -306,6 +336,35 @@ echo "- System Program (account[2]): $(jq -r '.callbackConfig.extraAccounts[2].p
 echo "Account configuration verified ✓"
 echo "----------------------------------------"
 
+# Create hexagram account if it doesn't exist
+HEXAGRAM_PDA=$(jq -r '.callbackConfig.extraAccounts[0].pubkey' "$INPUT_PATH")
+echo "Creating hexagram account at: $HEXAGRAM_PDA"
+
+# Calculate rent-exempt balance
+RENT_EXEMPTION=$(solana rent $HEXAGRAM_SPACE | grep "Rent-exempt minimum:" | awk '{print $3}')
+if [ -z "$RENT_EXEMPTION" ]; then
+    echo "Error: Failed to calculate rent exemption"
+    exit 1
+fi
+echo "Required rent-exempt balance: $RENT_EXEMPTION lamports"
+
+# Check if account exists
+if ! solana account "$HEXAGRAM_PDA" &>/dev/null; then
+    echo "Hexagram account does not exist, creating..."
+    if ! solana create-account \
+        --keypair "$PAYER_KEYPAIR" \
+        --space $HEXAGRAM_SPACE \
+        --program-id "$CALLBACK_PROGRAM_ID" \
+        "$HEXAGRAM_PDA" \
+        "$RENT_EXEMPTION"; then
+        echo "Error: Failed to create hexagram account"
+        exit 1
+    fi
+    echo "✓ Hexagram account created successfully"
+else
+    echo "Hexagram account already exists"
+fi
+
 echo "----------------------------------------"
 echo "Executing I Ching program..."
 if [ "$DEBUG" = true ]; then
@@ -317,13 +376,15 @@ if [ "$DEBUG" = true ]; then
 
     # Run with debug output and trace-level logging
     RUST_LOG="$RUST_LOG,solana_runtime=trace" \
-        "$BONSOL_CMD" execute -f "$INPUT_PATH" --wait || {
+        "$BONSOL_CMD" execute -f "$INPUT_PATH" \
+        --wait || {
         echo "Error: Execution failed!"
         echo "Please check the error messages above for details."
         exit 1
     }
 else
-    if ! "$BONSOL_CMD" execute -f "$INPUT_PATH" --wait; then
+    if ! "$BONSOL_CMD" execute -f "$INPUT_PATH" \
+        --wait; then
         echo "Error: Execution failed!"
         echo "Run with --debug flag for more information."
         exit 1
@@ -331,3 +392,8 @@ else
 fi
 
 echo "Execution complete! Check the output above for your I Ching reading."
+
+# Restore original Solana config
+if ! solana config set --keypair "$ORIGINAL_KEYPAIR"; then
+    echo "Warning: Failed to restore original Solana config"
+fi
