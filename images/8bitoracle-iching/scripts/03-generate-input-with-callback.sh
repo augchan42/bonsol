@@ -123,6 +123,7 @@ echo "Using:"
 echo "  Callback Program ID: $CALLBACK_PROGRAM_ID"
 echo "  Requester: $REQUESTER"
 echo "  Bonsol Program ID: $BONSOL_PROGRAM_ID"
+echo "  Image ID: $IMAGE_ID"
 echo "  Execution ID: $EXECUTION_ID"
 
 PDA_SCRIPT="$PROJECT_ROOT/onchain/8bitoracle-iching-callback/scripts/derive-pda.ts"
@@ -139,8 +140,8 @@ check_npm_deps "$SCRIPTS_DIR"
 cd "$SCRIPTS_DIR"
 
 # Run ts-node and capture stdout and stderr separately
-PDA_INFO_ERR=$(ts-node derive-pda.ts "$CALLBACK_PROGRAM_ID" "$REQUESTER" "$BONSOL_PROGRAM_ID" "$EXECUTION_ID" 2>&1 >/dev/null)
-PDA_INFO=$(ts-node derive-pda.ts "$CALLBACK_PROGRAM_ID" "$REQUESTER" "$BONSOL_PROGRAM_ID" "$EXECUTION_ID" 2>/dev/null)
+PDA_INFO_ERR=$(ts-node derive-pda.ts "$CALLBACK_PROGRAM_ID" "$REQUESTER" "$BONSOL_PROGRAM_ID" "$EXECUTION_ID" "$IMAGE_ID" 2>&1 >/dev/null)
+PDA_INFO=$(ts-node derive-pda.ts "$CALLBACK_PROGRAM_ID" "$REQUESTER" "$BONSOL_PROGRAM_ID" "$EXECUTION_ID" "$IMAGE_ID" 2>/dev/null)
 DERIVE_EXIT=$?
 
 # Return to original directory
@@ -157,18 +158,21 @@ if [ $DERIVE_EXIT -ne 0 ]; then
     exit 1
 fi
 
-# Extract PDAs from stdout (which has just the two lines we need)
+# Extract PDAs from stdout (now has three lines)
 EXECUTION_PDA=$(echo "$PDA_INFO" | head -n1)
-HEXAGRAM_PDA=$(echo "$PDA_INFO" | tail -n1)
+HEXAGRAM_PDA=$(echo "$PDA_INFO" | head -n2 | tail -n1)
+DEPLOYMENT_PDA=$(echo "$PDA_INFO" | tail -n1)
 
 # Validate PDA format (should be base58 encoded, 32-44 characters)
 PDA_REGEX='^[1-9A-HJ-NP-Za-km-z]{32,44}$'
-if [ -z "$EXECUTION_PDA" ] || [ -z "$HEXAGRAM_PDA" ] || \
+if [ -z "$EXECUTION_PDA" ] || [ -z "$HEXAGRAM_PDA" ] || [ -z "$DEPLOYMENT_PDA" ] || \
    ! [[ $EXECUTION_PDA =~ $PDA_REGEX ]] || \
-   ! [[ $HEXAGRAM_PDA =~ $PDA_REGEX ]]; then
+   ! [[ $HEXAGRAM_PDA =~ $PDA_REGEX ]] || \
+   ! [[ $DEPLOYMENT_PDA =~ $PDA_REGEX ]]; then
     echo "Error: Invalid PDA format"
     echo "Execution PDA: $EXECUTION_PDA"
     echo "Hexagram PDA: $HEXAGRAM_PDA"
+    echo "Deployment PDA: $DEPLOYMENT_PDA"
     echo "PDAs should be base58 encoded and 32-44 characters long"
     exit 1
 fi
@@ -176,6 +180,78 @@ fi
 echo "Derived PDAs:"
 echo "  Execution PDA: $EXECUTION_PDA"
 echo "  Hexagram PDA: $HEXAGRAM_PDA"
+echo "  Deployment PDA: $DEPLOYMENT_PDA"
+
+# Generate a random storage account keypair
+STORAGE_KEYPAIR="$PROJECT_ROOT/onchain/8bitoracle-iching-callback/scripts/storage-keypair.json"
+if [ ! -f "$STORAGE_KEYPAIR" ]; then
+  solana-keygen new --no-bip39-passphrase -o "$STORAGE_KEYPAIR"
+fi
+
+# Get the public key of the storage account
+STORAGE_PUBKEY=$(solana-keygen pubkey "$STORAGE_KEYPAIR")
+if [ -z "$STORAGE_PUBKEY" ]; then
+  echo "Error: Could not get storage public key from keypair"
+  exit 1
+fi
+echo "Using storage account: $STORAGE_PUBKEY"
+
+# Fund accounts with rent-exempt minimum
+echo "Funding accounts with rent-exempt minimum..."
+
+# Use 1 SOL for each account (1,000,000,000 lamports)
+FUNDING_AMOUNT="1"
+MINIMUM_LAMPORTS=1000000000  # 1 SOL in lamports
+
+echo "Funding amount: $FUNDING_AMOUNT SOL ($MINIMUM_LAMPORTS lamports)"
+
+# Fund execution PDA
+echo "Funding execution PDA..."
+if ! solana transfer --allow-unfunded-recipient "$EXECUTION_PDA" "$FUNDING_AMOUNT"; then
+    echo "Warning: Failed to fund execution PDA (may already be funded)"
+fi
+
+# Fund hexagram PDA
+echo "Funding hexagram PDA..."
+if ! solana transfer --allow-unfunded-recipient "$HEXAGRAM_PDA" "$FUNDING_AMOUNT"; then
+    echo "Warning: Failed to fund hexagram PDA (may already be funded)"
+fi
+
+# Fund storage account
+echo "Funding storage account..."
+if ! solana transfer --allow-unfunded-recipient "$STORAGE_PUBKEY" "$FUNDING_AMOUNT"; then
+    echo "Warning: Failed to fund storage account (may already be funded)"
+fi
+
+# Verify account funding
+echo "Verifying account funding..."
+EXECUTION_BALANCE_SOL=$(solana balance "$EXECUTION_PDA" | awk '{print $1}')
+EXECUTION_BALANCE=$(echo "$EXECUTION_BALANCE_SOL * 1000000000" | bc | cut -d'.' -f1)
+
+HEXAGRAM_BALANCE_SOL=$(solana balance "$HEXAGRAM_PDA" | awk '{print $1}')
+HEXAGRAM_BALANCE=$(echo "$HEXAGRAM_BALANCE_SOL * 1000000000" | bc | cut -d'.' -f1)
+
+STORAGE_BALANCE_SOL=$(solana balance "$STORAGE_PUBKEY" | awk '{print $1}')
+STORAGE_BALANCE=$(echo "$STORAGE_BALANCE_SOL * 1000000000" | bc | cut -d'.' -f1)
+
+echo "Current balances:"
+echo "  Execution PDA ($EXECUTION_PDA): $EXECUTION_BALANCE lamports ($EXECUTION_BALANCE_SOL SOL)"
+echo "  Hexagram PDA ($HEXAGRAM_PDA): $HEXAGRAM_BALANCE lamports ($HEXAGRAM_BALANCE_SOL SOL)"
+echo "  Storage Account ($STORAGE_PUBKEY): $STORAGE_BALANCE lamports ($STORAGE_BALANCE_SOL SOL)"
+
+if [ "$EXECUTION_BALANCE" -lt "$MINIMUM_LAMPORTS" ] || \
+   [ "$HEXAGRAM_BALANCE" -lt "$MINIMUM_LAMPORTS" ] || \
+   [ "$STORAGE_BALANCE" -lt "$MINIMUM_LAMPORTS" ]; then
+    echo "Error: Account funding verification failed"
+    echo "Required minimum: $MINIMUM_LAMPORTS lamports ($FUNDING_AMOUNT SOL)"
+    echo "Current balances:"
+    echo "  Execution PDA: $EXECUTION_BALANCE lamports ($EXECUTION_BALANCE_SOL SOL)"
+    echo "  Hexagram PDA: $HEXAGRAM_BALANCE lamports ($HEXAGRAM_BALANCE_SOL SOL)"
+    echo "  Storage Account: $STORAGE_BALANCE lamports ($STORAGE_BALANCE_SOL SOL)"
+    exit 1
+fi
+
+echo "✓ Accounts successfully funded"
 
 # Generate a random seed for the I Ching reading
 RANDOM_SEED=$(openssl rand -hex 32)
@@ -234,20 +310,6 @@ if [ "$MAX_BLOCK_HEIGHT" -le "$CURRENT_SLOT" ]; then
     exit 1
 fi
 
-# Generate a random storage account keypair
-STORAGE_KEYPAIR="$PROJECT_ROOT/onchain/8bitoracle-iching-callback/scripts/storage-keypair.json"
-if [ ! -f "$STORAGE_KEYPAIR" ]; then
-  solana-keygen new --no-bip39-passphrase -o "$STORAGE_KEYPAIR"
-fi
-
-# Get the public key of the storage account
-STORAGE_PUBKEY=$(solana-keygen pubkey "$STORAGE_KEYPAIR")
-if [ -z "$STORAGE_PUBKEY" ]; then
-  echo "Error: Could not get storage public key from keypair"
-  exit 1
-fi
-echo "Using storage account: $STORAGE_PUBKEY"
-
 # Get the prover account (using the Bonsol program ID)
 PROVER_PUBKEY="$BONSOL_PROGRAM_ID"
 if [ -z "$PROVER_PUBKEY" ]; then
@@ -266,6 +328,13 @@ if [ -f "$INPUT_FILE" ]; then
   cp "$INPUT_FILE" "$BACKUP_FILE"
 fi
 
+# Force dev mode to be enabled
+export RISC0_DEV_MODE=1
+
+# Set dev mode flag
+DEV_MODE=${RISC0_DEV_MODE:-0}
+echo "Dev mode setting: $DEV_MODE"
+
 # Create new input.json
 jq -n \
   --arg timestamp "$TIMESTAMP" \
@@ -275,16 +344,17 @@ jq -n \
   --arg programId "$CALLBACK_PROGRAM_ID" \
   --arg executionPda "$EXECUTION_PDA" \
   --arg hexagramPda "$HEXAGRAM_PDA" \
-  --arg storagePubkey "$STORAGE_PUBKEY" \
-  --arg proverPubkey "$PROVER_PUBKEY" \
+  --arg deploymentPda "$DEPLOYMENT_PDA" \
   --arg maxBlockHeight "$MAX_BLOCK_HEIGHT" \
+  --argjson devMode "$DEV_MODE" \
   '{
     "timestamp": ($timestamp | tonumber),
     "imageId": $imageId,
     "executionId": $executionId,
     "executionConfig": {
       "verifyInputHash": false,
-      "forwardOutput": true
+      "forwardOutput": true,
+      "devMode": $devMode
     },
     "inputs": [
       {
@@ -294,54 +364,15 @@ jq -n \
     ],
     "tip": 12000,
     "expiry": ($maxBlockHeight | tonumber),
-    "preInstructions": [
-      {
-        "programId": "ComputeBudget111111111111111111111111111111",
-        "accounts": [],
-        "data": [
-          0,
-          88,
-          21,
-          0,
-          0,
-          0,
-          0,
-          0
-        ]
-      },
-      {
-        "programId": "ComputeBudget111111111111111111111111111111",
-        "accounts": [],
-        "data": [
-          1,
-          160,
-          134,
-          1,
-          0,
-          0,
-          0,
-          0
-        ]
-      }
-    ],
+    "preInstructions": [],
     "callbackConfig": {
       "programId": $programId,
-      "instructionPrefix": [1],
+      "instructionPrefix": [0],
       "extraAccounts": [
-        {
-          "pubkey": $executionPda,
-          "isSigner": true,
-          "isWritable": false
-        },
         {
           "pubkey": $hexagramPda,
           "isSigner": false,
           "isWritable": true
-        },
-        {
-          "pubkey": $proverPubkey,
-          "isSigner": false,
-          "isWritable": false
         },
         {
           "pubkey": "11111111111111111111111111111111",

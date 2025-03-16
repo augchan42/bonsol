@@ -1,0 +1,167 @@
+# RISC0 Development Mode Standards
+
+## Context
+- Applied when working with RISC0 v1.2.1 in development mode
+- Focuses on proper creation and handling of dev mode receipts
+- Ensures consistent behavior between dev and production modes
+
+## Requirements
+
+### Dev Mode Detection
+- Always check for dev mode before creating fake receipts:
+  ```rust
+  if !option_env!("RISC0_DEV_MODE").is_some() {
+      return Err(anyhow::anyhow!("Dev mode must be enabled"));
+  }
+  ```
+
+### Receipt Creation
+- Use `FakeReceipt` and `Receipt::new` - never construct `SuccinctReceipt` directly:
+  ```rust
+  // Create mock claim
+  let mock_claim = ReceiptClaim::ok(
+      image_id,
+      journal.bytes.clone(),
+  );
+
+  // Create fake receipt
+  let fake_receipt = FakeReceipt::new(mock_claim);
+  
+  // Create full receipt
+  let receipt = Receipt::new(
+      InnerReceipt::Fake(fake_receipt),
+      journal.bytes.clone()
+  );
+  ```
+
+### Error Handling
+- Use proper error handling with Result and ? operator:
+  ```rust
+  let journal = session.journal
+      .ok_or_else(|| anyhow::anyhow!("Journal required"))?;
+  
+  let digest = receipt.claim()?.digest();
+  ```
+
+### Logging
+- Add debug logging in dev mode:
+  ```rust
+  if option_env!("RISC0_DEV_MODE").is_some() {
+      tracing::debug!("Creating dev mode receipt for image_id: {:?}", image_id);
+  }
+  ```
+
+### Proof Generation Pattern
+```rust
+async fn generate_proof(
+    image_id: Digest,
+    inputs: Vec<u8>,
+) -> Result<ProofResult> {
+    // Create and run session
+    let env = ExecutorEnv::builder()
+        .write(&inputs)?
+        .build()?;
+    let session = env.run()?;
+    
+    // Get journal
+    let journal = session.journal
+        .ok_or_else(|| anyhow::anyhow!("Journal required"))?;
+
+    if option_env!("RISC0_DEV_MODE").is_some() {
+        // Dev mode path
+        let mock_claim = ReceiptClaim::ok(
+            image_id,
+            journal.bytes.clone(),
+        );
+        let fake_receipt = FakeReceipt::new(mock_claim);
+        let receipt = Receipt::new(
+            InnerReceipt::Fake(fake_receipt),
+            journal.bytes.clone()
+        );
+        let digest = receipt.claim()?.digest();
+        Ok(ProofResult::new(journal, digest, receipt))
+    } else {
+        // Production path
+        let prover = get_prover_server(&ProverOpts::default())?;
+        let receipt = prover.prove_session(&ctx, &session)?;
+        let digest = receipt.claim()?.digest();
+        Ok(ProofResult::new(journal, digest, receipt))
+    }
+}
+```
+
+## Examples
+
+<example>
+// Good: Complete dev mode implementation
+use risc0_zkvm::{
+    Receipt, InnerReceipt, FakeReceipt, ReceiptClaim,
+    sha::Digest, Journal,
+    receipt_claim::MaybePruned,
+};
+
+pub struct ProofResult {
+    pub journal: Journal,
+    pub digest: Digest,
+    pub receipt: Receipt,
+}
+
+impl ProofResult {
+    pub fn new(journal: Journal, digest: Digest, receipt: Receipt) -> Self {
+        Self { journal, digest, receipt }
+    }
+}
+
+pub fn create_dev_receipt(
+    image_id: Digest,
+    journal: &Journal,
+) -> Result<Receipt> {
+    if !option_env!("RISC0_DEV_MODE").is_some() {
+        return Err(anyhow::anyhow!("Dev mode must be enabled"));
+    }
+
+    tracing::debug!("Creating dev mode receipt");
+    
+    let mock_claim = ReceiptClaim::ok(
+        image_id,
+        journal.bytes.clone(),
+    );
+    let fake_receipt = FakeReceipt::new(mock_claim);
+    let receipt = Receipt::new(
+        InnerReceipt::Fake(fake_receipt),
+        journal.bytes.clone()
+    );
+
+    Ok(receipt)
+}
+</example>
+
+<example type="invalid">
+// Bad: Incorrect dev mode receipt creation
+fn create_invalid_receipt(
+    image_id: Digest,
+    journal: &Journal,
+) -> Receipt {
+    // ❌ WRONG: Missing dev mode check
+    let mock_claim = ReceiptClaim::ok(
+        image_id,
+        journal.bytes.clone(),
+    );
+    
+    // ❌ WRONG: Direct SuccinctReceipt construction
+    let receipt = SuccinctReceipt::new(...);
+    
+    receipt
+}
+</example>
+
+## Critical Notes
+<critical>
+- ALWAYS check for dev mode before creating fake receipts
+- NEVER construct SuccinctReceipt directly - use Receipt::new with FakeReceipt
+- Use proper error handling with Result and ? operator
+- Add appropriate debug logging
+- Keep the dev mode path as simple as possible
+- Use proper types and constructors from the RISC0 API
+- Handle both dev and production paths cleanly
+</critical> 

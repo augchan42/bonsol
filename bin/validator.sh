@@ -52,15 +52,10 @@ export RISC0_DEV_MODE=1
 
 # Set comprehensive logging to capture all program output
 export RUST_LOG="error,\
-solana_metrics::metrics=error,\
 solana_program::log=info,\
-solana_program_runtime=info,\
-solana_bpf_loader=debug,\
-bonsol=trace,\
-solana_runtime::message_processor=info,\
-solana_runtime::bank=error,\
-solana_runtime::transaction_processor=info,\
-solana_runtime=info"
+bonsol=debug,\
+solana_runtime::message_processor=error,\
+solana_runtime::transaction_processor=error"
 
 export RUST_BACKTRACE=1
 

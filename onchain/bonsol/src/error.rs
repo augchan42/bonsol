@@ -79,6 +79,8 @@ pub enum ChannelError {
     InvalidExecutionAccountOwner,
     #[error("Unexpected Proof System")]
     UnexpectedProofSystem,
+    #[error("Account is not rent exempt")]
+    NotRentExempt,
 }
 
 impl From<ChannelError> for ProgramError {

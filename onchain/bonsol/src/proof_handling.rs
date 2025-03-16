@@ -25,35 +25,51 @@ pub fn verify_risc0_v1_0_1(proof: &[u8], inputs: &[u8]) -> Result<bool, ChannelE
 }
 
 pub fn verify_risc0_v1_2_1(proof: &[u8], inputs: &[u8]) -> Result<bool, ChannelError> {
+    // Check if we're in dev mode via environment variable first
+    let is_dev_mode = option_env!("RISC0_DEV_MODE").is_some();
+    
     msg!(
-        "Starting RISC0 v1.2.1 verification:\n\
+        "🔍 [SMART CONTRACT] Starting RISC0 v1.2.1 verification:\n\
+         - Component: Smart Contract (On-Chain)\n\
+         - Mode: {}\n\
          - Proof size: {} bytes\n\
          - Input size: {} bytes\n\
          - Proof prefix: {}\n\
          - Input prefix: {}",
+        if is_dev_mode { "Development" } else { "Production" },
         proof.len(),
         inputs.len(),
         hex::encode(&proof[..32.min(proof.len())]),
         hex::encode(&inputs[..32.min(inputs.len())])
     );
 
-    // Check if we're in dev mode via environment variable
-    if option_env!("RISC0_DEV_MODE").is_some() {
-        msg!("Dev mode: Skipping cryptographic verification");
-        msg!("Dev mode: Received proof size: {} bytes", proof.len());
-        msg!("Dev mode: Proof prefix: {}", hex::encode(&proof[..32.min(proof.len())]));
+    if is_dev_mode {
+        msg!("🔧 [SMART CONTRACT] DEV MODE: Starting proof validation");
+        msg!("📦 [SMART CONTRACT] DEV MODE: Checking proof format");
         
-        // In dev mode, accept either:
-        // 1. A 32-byte proof (original check)
-        // 2. A proof that matches the expected execution digest format
-        if proof.len() == 32 || (proof.len() >= 32 && proof[..32].len() == 32) {
-            msg!("Dev mode: Mock proof accepted - valid execution digest format");
+        // In dev mode, we only need to verify the proof length is correct
+        // For dev mode, we accept either 32 bytes (original) or 256 bytes (padded)
+        if proof.len() == 32 || proof.len() == 256 {
+            msg!(
+                "✅ [SMART CONTRACT] DEV MODE: Valid proof length ({} bytes)\n\
+                 - Status: ACCEPTED\n\
+                 - Verification: BYPASSED",
+                proof.len()
+            );
             return Ok(true);
         }
-        msg!("Dev mode: Invalid mock proof format (expected 32 byte digest)");
-        return Ok(false);
+        
+        msg!(
+            "❌ [SMART CONTRACT] DEV MODE: Invalid proof length\n\
+             - Expected: 32 or 256 bytes\n\
+             - Received: {} bytes\n\
+             - Status: REJECTED",
+            proof.len()
+        );
+        return Err(ChannelError::InvalidProof);
     }
 
+    msg!("🔒 [SMART CONTRACT] PRODUCTION MODE: Proceeding with full verification");
     let ins: [[u8; 32]; 5] = [
         sized_range::<32>(&inputs[0..32])?,
         sized_range::<32>(&inputs[32..64])?,
@@ -63,7 +79,7 @@ pub fn verify_risc0_v1_2_1(proof: &[u8], inputs: &[u8]) -> Result<bool, ChannelE
     ];
 
     msg!(
-        "Input arrays prepared:\n\
+        "📝 Input arrays prepared:\n\
          - Array 0 (control root 0): {}\n\
          - Array 1 (control root 1): {}\n\
          - Array 2 (digest half 1): {}\n\
@@ -76,20 +92,20 @@ pub fn verify_risc0_v1_2_1(proof: &[u8], inputs: &[u8]) -> Result<bool, ChannelE
         hex::encode(&ins[4])
     );
     
-    msg!("Starting proof verification with verifying key");
+    msg!("🔐 Starting cryptographic proof verification with verifying key");
     let result = verify_proof::<5>(proof, ins, &VERIFYINGKEY);
     
     match &result {
         Ok(true) => msg!(
-            "Verification succeeded:\n\
+            "✅ Verification succeeded:\n\
              - Total inputs processed: 5"
         ),
         Ok(false) => msg!(
-            "Verification failed (returned false):\n\
+            "❌ Verification failed (returned false):\n\
              - Total inputs processed: 5"
         ),
         Err(e) => msg!(
-            "Verification error:\n\
+            "❌ Verification error:\n\
              - Error: {:?}\n\
              - Total inputs processed: 5",
             e
@@ -104,6 +120,13 @@ fn verify_proof<const NI: usize>(
     inputs: [[u8; 32]; NI],
     vkey: &Groth16Verifyingkey,
 ) -> Result<bool, ChannelError> {
+    // Check dev mode first
+    if option_env!("RISC0_DEV_MODE").is_some() {
+        msg!("🔧 [SMART CONTRACT] DEV MODE: Bypassing cryptographic verification");
+        msg!("✅ [SMART CONTRACT] DEV MODE: Proof automatically accepted");
+        return Ok(true);
+    }
+
     msg!("Step 1: Starting proof verification process");
     
     // Log input details

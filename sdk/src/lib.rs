@@ -174,7 +174,7 @@ impl BonsolClient {
         let compute_price_val = self.get_fees(signer).await?;
         let instruction =
             instructions::deploy_v1(signer, image_id, image_size, program_name, url, inputs)?;
-        let compute = ComputeBudgetInstruction::set_compute_unit_limit(200_000);
+        let compute = ComputeBudgetInstruction::set_compute_unit_limit(1_000_000);
         let compute_price = ComputeBudgetInstruction::set_compute_unit_price(compute_price_val);
         Ok(vec![compute, compute_price, instruction])
     }
@@ -230,13 +230,16 @@ impl BonsolClient {
         )?;
         
         debug!("Setting compute budget...");
-        let compute = ComputeBudgetInstruction::set_compute_unit_limit(200_000);
+        let compute = ComputeBudgetInstruction::set_compute_unit_limit(1_000_000);
         let compute_price = ComputeBudgetInstruction::set_compute_unit_price(compute_price_val);
         
         info!(
-            "Transaction prepared with compute budget: limit={}, price={}",
-            200_000,
-            compute_price_val
+            "Transaction prepared with compute budget:\n\
+             - Compute unit limit: 1,000,000\n\
+             - Compute unit price: {}\n\
+             - Total max cost: {} lamports",
+            compute_price_val,
+            compute_price_val * 1_000_000
         );
         
         Ok(vec![compute, compute_price, instruction])

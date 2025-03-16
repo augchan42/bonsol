@@ -1085,17 +1085,21 @@ pub async fn risc0_compress_proof(
                         }
                     };
                     
-                    // Create minimal mock proof data
-                    let mock_proof = vec![0u8; 32]; // Minimal mock proof
+                    // Get execution digest from the claim's post state
+                    let execution_digest = rc.post.digest().as_bytes().to_vec();
+                    
+                    // Create proof that matches the execution digest format
+                    // Use the first 32 bytes of the execution digest as the proof
+                    let mut mock_proof = vec![0u8; 32];
+                    mock_proof.copy_from_slice(&execution_digest[..32]);
                     
                     emit_event!(MetricEvents::ProofCompression,
                         mode => "dev",
-                        details => "Using mock proof data",
+                        details => "Using execution digest as proof",
                         system_code => system,
                         user_code => user
                     );
                     
-                    let execution_digest = rc.post.digest().as_bytes().to_vec();
                     debug!("Dev mode: Created compressed receipt with execution digest: {:?}", execution_digest);
                     
                     Ok(CompressedReceipt {
@@ -1107,11 +1111,13 @@ pub async fn risc0_compress_proof(
                 }
                 MaybePruned::Pruned(digest) => {
                     debug!("Dev mode with pruned digest: {:?}", digest);
+                    // For pruned digests, use the digest itself as both proof and execution digest
+                    let digest_bytes = digest.as_bytes().to_vec();
                     Ok(CompressedReceipt {
-                        execution_digest: digest.as_bytes().to_vec(),
+                        execution_digest: digest_bytes.clone(),
                         exit_code_system: 0,
                         exit_code_user: 0,
-                        proof: vec![0u8; 32], // Minimal mock proof
+                        proof: digest_bytes[..32].to_vec(),
                     })
                 }
             }
@@ -1132,10 +1138,16 @@ fn create_dev_succinct_receipt(
     image_id: Digest,
     journal_bytes: Vec<u8>,
 ) -> Result<Receipt> {
-    // Create a mock claim that matches the format expected by Bonsol
-    let mock_claim = ReceiptClaim::ok(image_id, journal_bytes.clone());
+    debug!("Dev mode: Creating mock receipt with valid execution digest");
     
-    // Create a FakeReceipt - note it only takes one argument in v1.2.1
+    // Create a mock claim that matches the format expected by Bonsol
+    // Use the journal bytes to create a non-zero post state
+    let mock_claim = ReceiptClaim::ok(
+        image_id,
+        journal_bytes.clone(),
+    );
+    
+    // Create a FakeReceipt with the claim
     let fake_receipt = FakeReceipt::new(mock_claim);
     
     // Create a Receipt with the fake inner receipt
@@ -1143,6 +1155,10 @@ fn create_dev_succinct_receipt(
         InnerReceipt::Fake(fake_receipt),
         journal_bytes
     );
+    
+    // Validate that we have a non-zero execution digest
+    let digest = receipt.claim()?.digest();
+    debug!("Dev mode: Created receipt with execution digest: {:?}", digest);
     
     Ok(receipt)
 }

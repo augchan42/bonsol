@@ -303,7 +303,7 @@ pub fn execute_transform_cli_inputs(inputs: Vec<CliInput>) -> Result<Vec<InputT>
 }
 
 fn is_valid_hex(s: &str) -> (bool, Vec<u8>) {
-    if s.len() % 4 != 0 {
+    if s.len() % 2 != 0 {
         return (false, vec![]);
     }
     let is_hex_char = |c: char| c.is_ascii_hexdigit();
