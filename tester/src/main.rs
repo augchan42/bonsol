@@ -56,9 +56,10 @@ async fn example_sdk_no_callback_test(
     let slot = bonsol_client.get_current_slot().await?;
     let ixs = bonsol_client
         .execute_v1(
-            &signer.pubkey(),
-            SIMPLE_IMAGE_ID,
-            &execution_id,
+            &signer.pubkey(), // requester
+            &signer.pubkey(), // payer
+            SIMPLE_IMAGE_ID,  // image_id
+            &execution_id,    // execution_id
             vec![
                 InputRef::new(InputType::PublicData, input_1.as_bytes()),
                 InputRef::new(InputType::Private, input_2.as_bytes()),
@@ -127,6 +128,7 @@ async fn example_sdk_test(
     let slot = bonsol_client.get_current_slot().await?;
     let ixs = bonsol_client
         .execute_v1(
+            &signer.pubkey(),
             &signer.pubkey(),
             SIMPLE_IMAGE_ID,
             &execution_id,

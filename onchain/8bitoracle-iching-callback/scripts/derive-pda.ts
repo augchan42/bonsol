@@ -7,6 +7,17 @@ const HEXAGRAM_SEED_VERSION = Buffer.from("v1");
 const EXECUTION_SEED_PREFIX = Buffer.from("execution");
 const DEPLOYMENT_SEED_PREFIX = Buffer.from("deployment");
 
+// Function to convert hex string to Uint8Array
+function hexToBytes(hex: string): Uint8Array {
+  // Remove 0x prefix if present
+  hex = hex.replace(/^0x/, '');
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < hex.length; i += 2) {
+    bytes[i / 2] = parseInt(hex.slice(i, i + 2), 16);
+  }
+  return bytes;
+}
+
 // Function to derive the execution account PDA
 async function deriveExecutionAddress(
   requester: PublicKey,
@@ -27,15 +38,15 @@ async function deriveExecutionAddress(
   });
   console.error("Execution ID:", {
     value: executionId,
-    bytes: [...Buffer.from(executionId)],
-    length: Buffer.from(executionId).length,
+    bytes: [...hexToBytes(executionId)],
+    length: hexToBytes(executionId).length,
   });
   console.error("Bonsol Program ID:", bonsolProgramId.toBase58());
 
   const seeds = [
     EXECUTION_SEED_PREFIX,
     requester.toBuffer(),
-    Buffer.from(executionId),
+    hexToBytes(executionId),
   ];
 
   console.error(
@@ -101,15 +112,15 @@ async function deriveDeploymentAddress(
     utf8: DEPLOYMENT_SEED_PREFIX.toString("utf8"),
   });
   
-  // Hash the image ID
-  const imageIdHash = createHash("sha256").update(imageId).digest();
-  console.error("Image ID Hash:", {
+  // Convert image ID to bytes
+  const imageIdBytes = hexToBytes(imageId);
+  console.error("Image ID:", {
     imageId,
-    hash: imageIdHash.toString("hex"),
-    length: imageIdHash.length,
+    bytes: [...imageIdBytes],
+    length: imageIdBytes.length,
   });
 
-  const seeds = [DEPLOYMENT_SEED_PREFIX, imageIdHash];
+  const seeds = [DEPLOYMENT_SEED_PREFIX, imageIdBytes];
 
   console.error(
     "Seeds array:",

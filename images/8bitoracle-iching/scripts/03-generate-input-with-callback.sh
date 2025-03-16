@@ -228,8 +228,8 @@ check_npm_deps "$SCRIPTS_DIR"
 cd "$SCRIPTS_DIR"
 
 # Run ts-node and capture stdout and stderr separately
-PDA_INFO_ERR=$(ts-node derive-pda.ts "$CALLBACK_PROGRAM_ID" "$REQUESTER" "$BONSOL_PROGRAM_ID" "$EXECUTION_ID" "$IMAGE_ID" 2>&1 >/dev/null)
-PDA_INFO=$(ts-node derive-pda.ts "$CALLBACK_PROGRAM_ID" "$REQUESTER" "$BONSOL_PROGRAM_ID" "$EXECUTION_ID" "$IMAGE_ID" 2>/dev/null)
+PDA_INFO_ERR=$(ts-node derive-pda.ts "$CALLBACK_PROGRAM_ID" "$REQUESTER" "$BONSOL_PROGRAM_ID" "$IMAGE_ID" "$EXECUTION_ID" 2>&1 >/dev/null)
+PDA_INFO=$(ts-node derive-pda.ts "$CALLBACK_PROGRAM_ID" "$REQUESTER" "$BONSOL_PROGRAM_ID" "$IMAGE_ID" "$EXECUTION_ID" 2>/dev/null)
 DERIVE_EXIT=$?
 
 # Return to original directory
@@ -434,11 +434,13 @@ jq -n \
   --arg systemProgram "11111111111111111111111111111111" \
   --arg deploymentPda "$DEPLOYMENT_PDA" \
   --arg maxBlockHeight "$MAX_BLOCK_HEIGHT" \
+  --arg executionPda "$EXECUTION_PDA" \
   --argjson devMode "$DEV_MODE" \
   '{
     "timestamp": ($timestamp | tonumber),
     "imageId": $imageId,
     "executionId": $executionId,
+    "executionPda": $executionPda,
     "executionConfig": {
       "verifyInputHash": false,
       "forwardOutput": true,

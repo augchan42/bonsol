@@ -49,14 +49,19 @@ echo "Project root directory: $PROJECT_ROOT"
 
 # Set BONSOL_CMD based on environment
 if [ "$USE_LOCAL" = true ]; then
+    # Build local debug version
+    echo "Building local bonsol binary..."
+    if ! cargo build; then
+        echo "Error: Failed to build bonsol"
+        exit 1
+    fi
+    
     # Use local debug build
     BONSOL_BIN="$PROJECT_ROOT/target/debug/bonsol"
     
     # Check if debug build exists
     if [ ! -f "$BONSOL_BIN" ]; then
-        echo "Error: Could not find local bonsol binary at $BONSOL_BIN"
-        echo "Please build the project first with:"
-        echo "  cargo build"
+        echo "Error: Could not find local bonsol binary at $BONSOL_BIN after build"
         exit 1
     fi
     
@@ -334,3 +339,36 @@ echo "Execution complete! Check the output above for your I Ching reading."
 if ! solana config set --keypair "$CURRENT_KEYPAIR"; then
     echo "Warning: Failed to restore original Solana config"
 fi
+
+# Get the execution PDA from input.json
+EXECUTION_PDA=$(jq -r '.executionPda' "$INPUT_PATH")
+if [ -z "$EXECUTION_PDA" ] || [ "$EXECUTION_PDA" = "null" ]; then
+    echo "Error: Could not extract executionPda from input.json"
+    exit 1
+fi
+echo "Using execution PDA: $EXECUTION_PDA"
+
+# Check execution PDA balance
+EXEC_PDA_BALANCE=$(solana balance "$EXECUTION_PDA" | awk '{print $1}')
+echo "Current execution PDA balance: $EXEC_PDA_BALANCE SOL"
+
+if (($(echo "$EXEC_PDA_BALANCE < 0.1" | bc -l))); then
+    echo "Execution PDA balance low, transferring 0.1 SOL from payer..."
+    if ! solana transfer --allow-unfunded-recipient "$EXECUTION_PDA" 0.1 --keypair "$BONSOL_PAYER_KEYPAIR"; then
+        echo "Error: Failed to transfer SOL to execution PDA"
+        exit 1
+    fi
+    echo "Transfer successful"
+    
+    # Verify new balance
+    NEW_EXEC_PDA_BALANCE=$(solana balance "$EXECUTION_PDA" | awk '{print $1}')
+    echo "New execution PDA balance: $NEW_EXEC_PDA_BALANCE SOL"
+    
+    if (($(echo "$NEW_EXEC_PDA_BALANCE < 0.1" | bc -l))); then
+        echo "Error: Execution PDA balance still too low after transfer"
+        exit 1
+    fi
+fi
+
+echo "Execution PDA balance check passed ✓"
+echo "----------------------------------------"

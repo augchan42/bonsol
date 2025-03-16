@@ -117,7 +117,7 @@ async fn main() -> anyhow::Result<()> {
             execute::execute(
                 &sdk,
                 rpc_url,
-                std::env::var("BONSOL_PAYER_KEYPAIR").unwrap_or_else(|_| "~/.config/solana/id.json".to_string()).as_str(),
+                std::env::var("BONSOL_REQUESTER_KEYPAIR").unwrap_or_else(|_| "~/.config/solana/id.json".to_string()).as_str(),
                 execution_request_file,
                 program_id,
                 execution_id,
