@@ -874,6 +874,7 @@ dependencies = [
  "solana-program 2.0.23",
  "solana-sdk",
  "thiserror 1.0.69",
+ "tracing",
 ]
 
 [[package]]

@@ -111,7 +111,7 @@ pub fn process_instruction(
     };
     
     msg!("\n🔍 Attempting handle_callback");
-    msg!("Using execution account at index 1: {}", accounts[1].key);
+    msg!("Using execution account at index 0: {}", accounts[0].key);
     
     // Add detailed data inspection
     msg!("\n📝 Analyzing stripped data:");
@@ -124,7 +124,7 @@ pub fn process_instruction(
     // Log account details that handle_callback will use
     msg!("\n📝 Account details for handle_callback:");
     msg!("Image ID: {}", BITORACLE_ICHING_IMAGE_ID);
-    msg!("Execution account: {}", accounts[1].key);
+    msg!("Execution account: {}", accounts[0].key);
     msg!("Number of accounts: {}", accounts.len());
     for (i, acc) in accounts.iter().enumerate() {
         msg!("Account {}: {} (owner: {})", i, acc.key, acc.owner);
@@ -140,7 +140,7 @@ pub fn process_instruction(
     // Process callback data
     let callback_data: BonsolCallback = match handle_callback(
         BITORACLE_ICHING_IMAGE_ID,
-        &accounts[1].key,
+        &accounts[0].key,
         accounts,
         stripped_data,
     ) {

@@ -20,6 +20,18 @@ for dep in "${REQUIRED_DEPS[@]}"; do
 done
 echo "✓ All dependencies found"
 
+# Source bonsol exports
+EXPORTS_FILE="$(dirname "$0")/bonsol_exports.sh"
+if [ ! -f "$EXPORTS_FILE" ]; then
+    echo "Error: bonsol_exports.sh not found at $EXPORTS_FILE"
+    echo "Please run 03-generate-input-with-callback.sh first to generate the exports"
+    exit 1
+fi
+
+echo "Sourcing Bonsol exports from: $EXPORTS_FILE"
+source "$EXPORTS_FILE"
+echo "✓ Bonsol exports loaded"
+
 # Parse command line arguments
 USE_LOCAL=false
 DEBUG=false
@@ -290,12 +302,10 @@ echo "Note: Bonsol prepends these accounts: requester(0), execution(1), callback
 echo "Extra accounts start at index 4:"
 
 # Get and validate the account configuration
-PROVER_ACCOUNT=$(jq -r '.callbackConfig.extraAccounts[0].pubkey' "$INPUT_PATH")
-HEXAGRAM_PDA=$(jq -r '.callbackConfig.extraAccounts[1].pubkey' "$INPUT_PATH")
-SYSTEM_PROGRAM=$(jq -r '.callbackConfig.extraAccounts[2].pubkey' "$INPUT_PATH")
-DEPLOYMENT_PDA=$(jq -r '.callbackConfig.extraAccounts[3].pubkey' "$INPUT_PATH")
+HEXAGRAM_PDA=$(jq -r '.callbackConfig.extraAccounts[0].pubkey' "$INPUT_PATH")
+SYSTEM_PROGRAM=$(jq -r '.callbackConfig.extraAccounts[1].pubkey' "$INPUT_PATH")
 
-echo "- Prover Account (account[3]): $PROVER_ACCOUNT"
+echo "Extra accounts from input.json:"
 echo "- Hexagram Account (account[4]): $HEXAGRAM_PDA"
 if [ "$SYSTEM_PROGRAM" != "11111111111111111111111111111111" ]; then
     echo "Error: System Program account (account[5]) must be 11111111111111111111111111111111"
@@ -303,12 +313,15 @@ if [ "$SYSTEM_PROGRAM" != "11111111111111111111111111111111" ]; then
     exit 1
 fi
 echo "- System Program (account[5]): $SYSTEM_PROGRAM"
-echo "- Deployment Account (account[6]): $DEPLOYMENT_PDA"
 
-# Validate Prover Account is Bonsol Program
-if [ "$PROVER_ACCOUNT" != "BoNsHRcyLLNdtnoDf8hiCNZpyehMC4FDMxs6NTxFi3ew" ]; then
-    echo "Error: Prover Account must be the Bonsol Program (BoNsHRcyLLNdtnoDf8hiCNZpyehMC4FDMxs6NTxFi3ew)"
-    echo "Got: $PROVER_ACCOUNT"
+# Validate account configuration
+if [ -z "$HEXAGRAM_PDA" ] || [ "$HEXAGRAM_PDA" = "null" ]; then
+    echo "Error: Missing hexagram PDA in extraAccounts"
+    exit 1
+fi
+
+if [ -z "$SYSTEM_PROGRAM" ] || [ "$SYSTEM_PROGRAM" = "null" ]; then
+    echo "Error: Missing system program in extraAccounts"
     exit 1
 fi
 

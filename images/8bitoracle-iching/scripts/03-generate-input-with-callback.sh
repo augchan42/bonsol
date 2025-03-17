@@ -399,12 +399,16 @@ if [ "$MAX_BLOCK_HEIGHT" -le "$CURRENT_SLOT" ]; then
 fi
 
 # Get the prover account (using the Bonsol program ID)
-PROVER_PUBKEY="$BONSOL_PROGRAM_ID"
+PROVER_PUBKEY="$BONSOL_PROGRAM_ID"  # Use Bonsol Program ID as prover
 if [ -z "$PROVER_PUBKEY" ]; then
   echo "Error: Could not get prover public key"
   exit 1
 fi
 echo "Using prover account: $PROVER_PUBKEY"
+
+# Get the system program ID (constant)
+SYSTEM_PROGRAM_ID="11111111111111111111111111111111"
+echo "Using system program ID: $SYSTEM_PROGRAM_ID"
 
 # Create input.json with callback configuration
 INPUT_FILE="$PROJECT_ROOT/images/8bitoracle-iching/input.json"
@@ -431,7 +435,7 @@ jq -n \
   --arg randomSeed "$RANDOM_SEED" \
   --arg programId "$CALLBACK_PROGRAM_ID" \
   --arg hexagramPda "$HEXAGRAM_PDA" \
-  --arg systemProgram "11111111111111111111111111111111" \
+  --arg systemProgram "$SYSTEM_PROGRAM_ID" \
   --arg deploymentPda "$DEPLOYMENT_PDA" \
   --arg maxBlockHeight "$MAX_BLOCK_HEIGHT" \
   --arg executionPda "$EXECUTION_PDA" \
@@ -461,22 +465,12 @@ jq -n \
       "instructionPrefix": [0],
       "extraAccounts": [
         {
-          "pubkey": $bonsolProgram,
-          "isSigner": false,
-          "isWritable": false
-        },
-        {
           "pubkey": $hexagramPda,
           "isSigner": false,
           "isWritable": true
         },
         {
           "pubkey": $systemProgram,
-          "isSigner": false,
-          "isWritable": false
-        },
-        {
-          "pubkey": $deploymentPda,
           "isSigner": false,
           "isWritable": false
         }
