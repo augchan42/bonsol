@@ -14,5 +14,19 @@ test-sbf = []
 [dependencies]
 solana-program = { workspace = true }
 bonsol-interface = { version = "0.4.5", path = "../../onchain/interface", features = ["on-chain"], default-features = false }
-thiserror = "1.0"
-borsh = "0.10" 
+borsh = { version = "0.10", default-features = false }
+thiserror = { version = "1.0", default-features = false }
+
+[profile.release]
+opt-level = "z"     # Optimize for size
+lto = true          # Enable link-time optimization
+codegen-units = 1   # Maximize size reduction
+panic = "abort"     # Remove panic unwinding
+strip = true        # Strip symbols
+overflow-checks = true  # Add explicit overflow checks
+debug = false       # No debug symbols
+rpath = false       # No runtime path
+incremental = false # No incremental compilation
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"] 

@@ -54,8 +54,10 @@ export RISC0_DEV_MODE=1
 export RUST_LOG="error,\
 solana_program::log=info,\
 bonsol=debug,\
-solana_runtime::message_processor=error,\
-solana_runtime::transaction_processor=error"
+solana_runtime::message_processor=info,\
+solana_runtime::transaction_processor=debug,\
+solana_runtime::loader_utils=debug,\
+solana_bpf_loader_program=debug"
 
 export RUST_BACKTRACE=1
 
@@ -72,13 +74,23 @@ if [ -z "$CALLBACK_PROGRAM_ID" ]; then
     exit 1
 fi
 
+# solana-test-validator \
+#     --limit-ledger-size 0 \
+#     --bind-address 0.0.0.0 \
+#     --rpc-pubsub-enable-block-subscription \
+#     --log \
+#     --bpf-program BoNsHRcyLLNdtnoDf8hiCNZpyehMC4FDMxs6NTxFi3ew target/deploy/bonsol.so \
+#     --bpf-program "$CALLBACK_PROGRAM_ID" target/deploy/bitoracle_iching_callback.so \
+#     --bpf-program exay1T7QqsJPNcwzMiWubR6vZnqrgM16jZRraHgqBGG target/deploy/callback_example.so \
+#     "${extra_programs[@]}" \
+#     $reset_option
+
 solana-test-validator \
     --limit-ledger-size 0 \
     --bind-address 0.0.0.0 \
     --rpc-pubsub-enable-block-subscription \
     --log \
     --bpf-program BoNsHRcyLLNdtnoDf8hiCNZpyehMC4FDMxs6NTxFi3ew target/deploy/bonsol.so \
-    --bpf-program "$CALLBACK_PROGRAM_ID" target/deploy/bitoracle_iching_callback.so \
     --bpf-program exay1T7QqsJPNcwzMiWubR6vZnqrgM16jZRraHgqBGG target/deploy/callback_example.so \
     "${extra_programs[@]}" \
     $reset_option
