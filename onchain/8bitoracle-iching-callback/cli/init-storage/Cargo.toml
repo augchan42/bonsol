@@ -1,0 +1,17 @@
+[package]
+name = "init-storage-cli"
+version = "0.1.0"
+edition = "2021"
+description = "CLI tool for initializing storage accounts for the 8BitOracle I Ching callback program"
+
+[[bin]]
+name = "init-storage"
+path = "src/main.rs"
+
+[dependencies]
+bitoracle-iching-callback = { path = "../..", features = ["no-entrypoint"] }
+solana-sdk = { workspace = true }
+solana-client = "~2.0"
+solana-program = { workspace = true }
+borsh = { version = "0.10", features = ["std"] }  # Enable std for CLI
+base64 = "0.21" 

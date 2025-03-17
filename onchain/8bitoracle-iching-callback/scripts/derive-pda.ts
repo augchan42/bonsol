@@ -2,8 +2,7 @@ import { PublicKey } from "@solana/web3.js";
 import { createHash } from "crypto";
 
 // Constants from our Rust program
-const HEXAGRAM_SEED_PREFIX = Buffer.from("8bitoracle-hexagram");
-const HEXAGRAM_SEED_VERSION = Buffer.from("v1");
+const HEXAGRAM_SEED = Buffer.from("hexagram");
 const EXECUTION_SEED_PREFIX = Buffer.from("execution");
 const DEPLOYMENT_SEED_PREFIX = Buffer.from("deployment");
 
@@ -73,27 +72,35 @@ async function deriveExecutionAddress(
 
 // Function to derive the PDA for hexagram storage
 export function deriveHexagramAddress(
-  executionPda: PublicKey,
+  payer: PublicKey,
   callbackProgram: PublicKey
 ): [PublicKey, number] {
   // Debug logging to stderr
-  console.error("============ PDA Derivation Debug ============");
-  console.error("HEXAGRAM_SEED_PREFIX:", HEXAGRAM_SEED_PREFIX);
-  console.error("HEXAGRAM_SEED_VERSION:", HEXAGRAM_SEED_VERSION);
-  console.error("Execution PDA:", executionPda.toBase58());
+  console.error("============ Hexagram PDA Derivation Debug ============");
+  console.error("HEXAGRAM_SEED:", {
+    length: HEXAGRAM_SEED.length,
+    bytes: [...HEXAGRAM_SEED],
+    utf8: HEXAGRAM_SEED.toString("utf8"),
+  });
+  console.error("Payer:", {
+    pubkey: payer.toBase58(),
+    bytes: [...payer.toBuffer()],
+    length: payer.toBuffer().length,
+  });
   console.error("Callback Program:", callbackProgram.toBase58());
 
   const [pda, bump] = PublicKey.findProgramAddressSync(
     [
-      Buffer.from(HEXAGRAM_SEED_PREFIX),
-      Buffer.from(HEXAGRAM_SEED_VERSION),
-      executionPda.toBuffer(),
+      HEXAGRAM_SEED,
+      payer.toBuffer(),
     ],
     callbackProgram
   );
 
-  console.error("Derived PDA:", pda.toBase58());
-  console.error("Bump:", bump);
+  console.error("Derived Hexagram PDA:", {
+    pubkey: pda.toBase58(),
+    bump,
+  });
   console.error("============================================");
 
   return [pda, bump];
@@ -147,30 +154,30 @@ async function main() {
   const args = process.argv.slice(2);
   if (args.length !== 5) {
     console.error(
-      "Usage: ts-node derive-pda.ts <callback_program_id> <requester_pubkey> <bonsol_program_id> <execution_id> <image_id>"
+      "Usage: ts-node derive-pda.ts <callback_program_id> <payer_pubkey> <bonsol_program_id> <execution_id> <image_id>"
     );
     process.exit(1);
   }
 
-  const [callbackProgramId, requesterStr, bonsolProgramIdStr, executionId, imageId] =
+  const [callbackProgramId, payerStr, bonsolProgramIdStr, executionId, imageId] =
     args;
   console.error("\n============ PDA Derivation Started ============");
   console.error("Command line arguments:");
   console.error("- Callback Program ID:", callbackProgramId);
-  console.error("- Requester:", requesterStr);
+  console.error("- Payer:", payerStr);
   console.error("- Bonsol Program ID:", bonsolProgramIdStr);
   console.error("- Execution ID:", executionId);
   console.error("- Image ID:", imageId);
 
   try {
     const callbackProgram = new PublicKey(callbackProgramId);
-    const requester = new PublicKey(requesterStr);
+    const payer = new PublicKey(payerStr);
     const bonsolProgram = new PublicKey(bonsolProgramIdStr);
 
     // First derive the execution account PDA using Bonsol program
     console.error("\nDeriving execution PDA...");
     const [executionPda, executionBump] = await deriveExecutionAddress(
-      requester,
+      payer,
       executionId,
       bonsolProgram
     );
@@ -179,10 +186,10 @@ async function main() {
       bump: executionBump,
     });
 
-    // Then derive the hexagram storage PDA using execution PDA
+    // Then derive the hexagram storage PDA using payer
     console.error("\nDeriving hexagram PDA...");
     const [hexagramPda, hexagramBump] = deriveHexagramAddress(
-      executionPda,
+      payer,
       callbackProgram
     );
     console.error("Hexagram PDA derived successfully:", {

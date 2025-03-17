@@ -6,6 +6,7 @@ use solana_program::msg;
 use solana_program::program_error::ProgramError;
 use solana_program::program_memory::sol_memcmp;
 use solana_program::pubkey::Pubkey;
+use solana_program::system_program::ID as SYS_ID;
 
 pub struct BonsolCallback<'a> {
     pub input_digest: &'a [u8],
@@ -41,9 +42,11 @@ pub fn handle_callback<'a>(
         return Err(ClientError::InvalidCallbackInstructionAccounts.into());
     }
     
-    if sol_memcmp(er_info.owner.as_ref(), crate::util::ID.as_ref(), 32) != 0 {
+    // Allow either Bonsol-owned accounts or System Program accounts (for new accounts)
+    if sol_memcmp(er_info.owner.as_ref(), crate::util::ID.as_ref(), 32) != 0 
+        && sol_memcmp(er_info.owner.as_ref(), SYS_ID.as_ref(), 32) != 0 {
         msg!("❌ Owner mismatch");
-        msg!("  Expected: {}", crate::util::ID);
+        msg!("  Expected: {} or {}", crate::util::ID, SYS_ID);
         msg!("  Got: {}", er_info.owner);
         return Err(ClientError::InvalidCallbackInstructionAccounts.into());
     }
@@ -53,29 +56,32 @@ pub fn handle_callback<'a>(
         return Err(ClientError::InvalidCallbackSignature.into());
     }
     
-    let er_data = &er_info.try_borrow_data()?;
-    if er_data.len() < 2 {
-        msg!("❌ Invalid data length: {}", er_data.len());
-        return Err(ClientError::ExecutionRequestReused.into());
-    }
-    
-    // Ensure this is a valid execution request data
-    let er = match root_as_execution_request_v1(er_data) {
-        Ok(er) => {
-            msg!("✓ Successfully parsed execution request data");
-            er
+    // Only check data if account is owned by Bonsol program
+    if sol_memcmp(er_info.owner.as_ref(), crate::util::ID.as_ref(), 32) == 0 {
+        let er_data = &er_info.try_borrow_data()?;
+        if er_data.len() < 2 {
+            msg!("❌ Invalid data length: {}", er_data.len());
+            return Err(ClientError::ExecutionRequestReused.into());
         }
-        Err(e) => {
-            msg!("❌ Failed to parse execution request data: {:?}", e);
-            return Err(ProgramError::InvalidInstructionData);
+        
+        // Ensure this is a valid execution request data
+        let er = match root_as_execution_request_v1(er_data) {
+            Ok(er) => {
+                msg!("✓ Successfully parsed execution request data");
+                er
+            }
+            Err(e) => {
+                msg!("❌ Failed to parse execution request data: {:?}", e);
+                return Err(ProgramError::InvalidInstructionData);
+            }
+        };
+        
+        if er.image_id() != Some(image_id) {
+            msg!("❌ Image ID mismatch");
+            msg!("  Expected: {}", image_id);
+            msg!("  Got: {:?}", er.image_id());
+            return Err(ClientError::InvalidCallbackImageId.into());
         }
-    };
-    
-    if er.image_id() != Some(image_id) {
-        msg!("❌ Image ID mismatch");
-        msg!("  Expected: {}", image_id);
-        msg!("  Got: {:?}", er.image_id());
-        return Err(ClientError::InvalidCallbackImageId.into());
     }
     
     msg!("✓ All validations passed");

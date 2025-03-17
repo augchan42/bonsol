@@ -209,7 +209,7 @@ BONSOL_PROGRAM_ID="BoNsHRcyLLNdtnoDf8hiCNZpyehMC4FDMxs6NTxFi3ew"
 echo "Deriving PDAs..."
 echo "Using:"
 echo "  Callback Program ID: $CALLBACK_PROGRAM_ID"
-echo "  Requester: $REQUESTER"
+echo "  Payer: $PAYER"
 echo "  Bonsol Program ID: $BONSOL_PROGRAM_ID"
 echo "  Image ID: $IMAGE_ID"
 echo "  Execution ID: $EXECUTION_ID"
@@ -228,8 +228,8 @@ check_npm_deps "$SCRIPTS_DIR"
 cd "$SCRIPTS_DIR"
 
 # Run ts-node and capture stdout and stderr separately
-PDA_INFO_ERR=$(ts-node derive-pda.ts "$CALLBACK_PROGRAM_ID" "$REQUESTER" "$BONSOL_PROGRAM_ID" "$EXECUTION_ID" "$IMAGE_ID" 2>&1 >/dev/null)
-PDA_INFO=$(ts-node derive-pda.ts "$CALLBACK_PROGRAM_ID" "$REQUESTER" "$BONSOL_PROGRAM_ID" "$EXECUTION_ID" "$IMAGE_ID" 2>/dev/null)
+PDA_INFO_ERR=$(ts-node derive-pda.ts "$CALLBACK_PROGRAM_ID" "$PAYER" "$BONSOL_PROGRAM_ID" "$EXECUTION_ID" "$IMAGE_ID" 2>&1 >/dev/null)
+PDA_INFO=$(ts-node derive-pda.ts "$CALLBACK_PROGRAM_ID" "$PAYER" "$BONSOL_PROGRAM_ID" "$EXECUTION_ID" "$IMAGE_ID" 2>/dev/null)
 DERIVE_EXIT=$?
 
 # Return to original directory
@@ -270,28 +270,55 @@ echo "  Execution PDA: $EXECUTION_PDA"
 echo "  Hexagram PDA: $HEXAGRAM_PDA"
 echo "  Deployment PDA: $DEPLOYMENT_PDA"
 
-# Generate a random storage account keypair
-STORAGE_KEYPAIR="$PROJECT_ROOT/onchain/8bitoracle-iching-callback/scripts/storage-keypair.json"
-if [ ! -f "$STORAGE_KEYPAIR" ]; then
-  solana-keygen new --no-bip39-passphrase -o "$STORAGE_KEYPAIR"
+# Calculate required space for HexagramData
+# - 6 bytes for lines [u8; 6]
+# - 47 bytes for ascii_art [u8; ASCII_ART_SIZE]
+# - 8 bytes for timestamp i64
+# - 1 byte for is_initialized bool
+HEXAGRAM_SPACE=$((6 + 47 + 8 + 1))
+echo "Required space for HexagramData: $HEXAGRAM_SPACE bytes"
+
+# Build the init-storage CLI tool if needed
+echo "Building init-storage CLI tool..."
+cargo build --manifest-path "$PROJECT_ROOT/onchain/8bitoracle-iching-callback/cli/init-storage/Cargo.toml" || {
+    echo "Error: Failed to build init-storage CLI tool"
+    exit 1
+}
+
+# Initialize the storage account using our CLI tool
+echo "Initializing storage account..."
+"$PROJECT_ROOT/target/debug/init-storage" \
+    --storage-address "$HEXAGRAM_PDA" \
+    --payer "$PAYER" \
+    --keypair "$PAYER_KEYPAIR" || {
+    echo "Warning: Storage account initialization failed (may already exist)"
+}
+
+# Wait for transaction confirmation
+sleep 2
+
+# Verify the account exists and has correct ownership
+echo "Verifying storage account..."
+STORAGE_INFO=$(solana account "$HEXAGRAM_PDA")
+if [ $? -ne 0 ]; then
+    echo "Error: Failed to fetch storage account info"
+    exit 1
 fi
 
-# Get the public key of the storage account
-STORAGE_PUBKEY=$(solana-keygen pubkey "$STORAGE_KEYPAIR")
-if [ -z "$STORAGE_PUBKEY" ]; then
-  echo "Error: Could not get storage public key from keypair"
-  exit 1
+STORAGE_OWNER=$(echo "$STORAGE_INFO" | grep "Owner:" | awk '{print $2}')
+
+echo "Storage account info:"
+echo "  Owner: $STORAGE_OWNER"
+
+# Verify the owner is the callback program
+if [ "$STORAGE_OWNER" != "$CALLBACK_PROGRAM_ID" ]; then
+    echo "Error: Storage account has incorrect owner"
+    echo "Expected: $CALLBACK_PROGRAM_ID"
+    echo "Got: $STORAGE_OWNER"
+    exit 1
 fi
-echo "Using storage account: $STORAGE_PUBKEY"
 
-# Fund accounts with rent-exempt minimum
-echo "Funding accounts with rent-exempt minimum..."
-
-# Use 1 SOL for each account (1,000,000,000 lamports)
-FUNDING_AMOUNT="1"
-MINIMUM_LAMPORTS=1000000000  # 1 SOL in lamports
-
-echo "Funding amount: $FUNDING_AMOUNT SOL ($MINIMUM_LAMPORTS lamports)"
+echo "✓ Storage account initialized with correct program ownership"
 
 # Fund execution PDA
 echo "Funding execution PDA..."
@@ -299,43 +326,19 @@ if ! solana transfer --allow-unfunded-recipient "$EXECUTION_PDA" "$FUNDING_AMOUN
     echo "Warning: Failed to fund execution PDA (may already be funded)"
 fi
 
-# Fund hexagram PDA
-echo "Funding hexagram PDA..."
-if ! solana transfer --allow-unfunded-recipient "$HEXAGRAM_PDA" "$FUNDING_AMOUNT"; then
-    echo "Warning: Failed to fund hexagram PDA (may already be funded)"
-fi
-
-# Fund storage account
-echo "Funding storage account..."
-if ! solana transfer --allow-unfunded-recipient "$STORAGE_PUBKEY" "$FUNDING_AMOUNT"; then
-    echo "Warning: Failed to fund storage account (may already be funded)"
-fi
-
 # Verify account funding
 echo "Verifying account funding..."
 EXECUTION_BALANCE_SOL=$(solana balance "$EXECUTION_PDA" | awk '{print $1}')
 EXECUTION_BALANCE=$(echo "$EXECUTION_BALANCE_SOL * 1000000000" | bc | cut -d'.' -f1)
 
-HEXAGRAM_BALANCE_SOL=$(solana balance "$HEXAGRAM_PDA" | awk '{print $1}')
-HEXAGRAM_BALANCE=$(echo "$HEXAGRAM_BALANCE_SOL * 1000000000" | bc | cut -d'.' -f1)
-
-STORAGE_BALANCE_SOL=$(solana balance "$STORAGE_PUBKEY" | awk '{print $1}')
-STORAGE_BALANCE=$(echo "$STORAGE_BALANCE_SOL * 1000000000" | bc | cut -d'.' -f1)
-
 echo "Current balances:"
 echo "  Execution PDA ($EXECUTION_PDA): $EXECUTION_BALANCE lamports ($EXECUTION_BALANCE_SOL SOL)"
-echo "  Hexagram PDA ($HEXAGRAM_PDA): $HEXAGRAM_BALANCE lamports ($HEXAGRAM_BALANCE_SOL SOL)"
-echo "  Storage Account ($STORAGE_PUBKEY): $STORAGE_BALANCE lamports ($STORAGE_BALANCE_SOL SOL)"
 
-if [ "$EXECUTION_BALANCE" -lt "$MINIMUM_LAMPORTS" ] || \
-   [ "$HEXAGRAM_BALANCE" -lt "$MINIMUM_LAMPORTS" ] || \
-   [ "$STORAGE_BALANCE" -lt "$MINIMUM_LAMPORTS" ]; then
+if [ "$EXECUTION_BALANCE" -lt "$MINIMUM_LAMPORTS" ]; then
     echo "Error: Account funding verification failed"
     echo "Required minimum: $MINIMUM_LAMPORTS lamports ($FUNDING_AMOUNT SOL)"
     echo "Current balances:"
     echo "  Execution PDA: $EXECUTION_BALANCE lamports ($EXECUTION_BALANCE_SOL SOL)"
-    echo "  Hexagram PDA: $HEXAGRAM_BALANCE lamports ($HEXAGRAM_BALANCE_SOL SOL)"
-    echo "  Storage Account: $STORAGE_BALANCE lamports ($STORAGE_BALANCE_SOL SOL)"
     exit 1
 fi
 
@@ -459,7 +462,6 @@ jq -n \
     ],
     "tip": 12000,
     "expiry": ($maxBlockHeight | tonumber),
-    "preInstructions": [],
     "callbackConfig": {
       "programId": $programId,
       "instructionPrefix": [0],
@@ -486,7 +488,6 @@ echo "Generated with:"
 echo "  Execution ID: $EXECUTION_ID"
 echo "  Execution PDA: $EXECUTION_PDA"
 echo "  Hexagram PDA: $HEXAGRAM_PDA"
-echo "  Storage Account: $STORAGE_PUBKEY"
 echo "  Prover Account: $PROVER_PUBKEY"
 echo "You can now run 04-execute.sh to execute the I Ching program"
 

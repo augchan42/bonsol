@@ -91,6 +91,7 @@ solana-test-validator \
     --rpc-pubsub-enable-block-subscription \
     --log \
     --bpf-program BoNsHRcyLLNdtnoDf8hiCNZpyehMC4FDMxs6NTxFi3ew target/deploy/bonsol.so \
+    --bpf-program "$CALLBACK_PROGRAM_ID" target/deploy/bitoracle_iching_callback.so \
     --bpf-program exay1T7QqsJPNcwzMiWubR6vZnqrgM16jZRraHgqBGG target/deploy/callback_example.so \
     "${extra_programs[@]}" \
     $reset_option
