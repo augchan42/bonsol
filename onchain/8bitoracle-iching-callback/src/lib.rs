@@ -81,120 +81,109 @@ pub fn process(pid: &Pubkey, accs: &[AccountInfo], data: &[u8]) -> ProgramResult
     
     // Log raw instruction data for debugging
     msg!("📦 Raw instruction data: {:?}", data);
-    if data.len() > 0 {
-        msg!("First byte (instruction discriminator): 0x{:02x}", data[0]);
-    }
     
-    // Split instruction data into discriminator and payload
-    if data.is_empty() {
-        msg!("❌ Error: Empty instruction data");
-        return Err(CallbackError::InvalidInstructionData.into());
-    }
-    
-    match data[0] {
-        // Initialize instruction (0)
-        0 => {
-            msg!("Processing Initialize instruction");
-            if accs.len() != 3 {
-                msg!("❌ Error: Initialize requires exactly 3 accounts");
-                return Err(CallbackError::InsufficientAccounts.into());
+    // Try to deserialize as CallbackInstruction first
+    match CallbackInstruction::try_from_slice(data) {
+        Ok(instruction) => {
+            match instruction {
+                CallbackInstruction::Initialize => {
+                    msg!("Processing Initialize instruction");
+                    if accs.len() != 3 {
+                        msg!("❌ Error: Initialize requires exactly 3 accounts");
+                        return Err(CallbackError::InsufficientAccounts.into());
+                    }
+                    
+                    let payer_account = &accs[0];
+                    let storage_account = &accs[1];
+                    let system_program = &accs[2];
+                    
+                    if !payer_account.is_signer {
+                        msg!("❌ Error: Payer must be a signer");
+                        return Err(ProgramError::MissingRequiredSignature);
+                    }
+                    
+                    if !storage_account.is_writable {
+                        msg!("❌ Error: Storage account must be writable");
+                        return Err(ProgramError::InvalidAccountData);
+                    }
+                    
+                    if system_program.key != &SYS_ID {
+                        msg!("❌ Error: Invalid system program");
+                        return Err(ProgramError::InvalidAccountData);
+                    }
+
+                    // Calculate required space and rent
+                    let required_size = std::mem::size_of::<HexagramData>();
+                    let rent = Rent::get()?;
+                    let lamports = rent.minimum_balance(required_size);
+
+                    msg!("Creating storage account...");
+                    msg!("Required space: {} bytes", required_size);
+                    msg!("Required lamports: {}", lamports);
+
+                    // Find PDA seeds
+                    let seeds = &[
+                        b"hexagram",
+                        payer_account.key.as_ref(),
+                    ];
+                    let (pda, bump_seed) = Pubkey::find_program_address(seeds, pid);
+
+                    // Verify the derived PDA matches our storage account
+                    if pda != *storage_account.key {
+                        msg!("❌ Error: Storage account does not match PDA");
+                        msg!("Expected: {}", pda);
+                        msg!("Got: {}", storage_account.key);
+                        return Err(ProgramError::InvalidArgument);
+                    }
+
+                    // Create the storage account using invoke_signed
+                    let create_account_ix = system_instruction::create_account(
+                        payer_account.key,
+                        storage_account.key,
+                        lamports,
+                        required_size as u64,
+                        pid,
+                    );
+
+                    let signer_seeds = &[
+                        b"hexagram",
+                        payer_account.key.as_ref(),
+                        &[bump_seed],
+                    ];
+
+                    invoke_signed(
+                        &create_account_ix,
+                        &[
+                            payer_account.clone(),
+                            storage_account.clone(),
+                            system_program.clone(),
+                        ],
+                        &[signer_seeds],
+                    )?;
+                    
+                    // Initialize the account data
+                    msg!("Initializing storage account data...");
+                    let hexagram = HexagramData {
+                        lines: [0u8; 6],
+                        ascii_art: [0u8; ASCII_ART_SIZE],
+                        timestamp: 0,
+                        is_initialized: true,
+                    };
+                    
+                    hexagram.serialize(&mut &mut storage_account.try_borrow_mut_data()?[..])?;
+                    msg!("✓ Storage account initialized successfully");
+                    Ok(())
+                },
+                CallbackInstruction::Callback(callback_data) => {
+                    msg!("Processing Callback instruction");
+                    process_callback(pid, accs, &callback_data)
+                }
             }
-            
-            let payer_account = &accs[0];
-            let storage_account = &accs[1];
-            let system_program = &accs[2];
-            
-            if !payer_account.is_signer {
-                msg!("❌ Error: Payer must be a signer");
-                return Err(ProgramError::MissingRequiredSignature);
-            }
-            
-            if !storage_account.is_writable {
-                msg!("❌ Error: Storage account must be writable");
-                return Err(ProgramError::InvalidAccountData);
-            }
-            
-            if system_program.key != &SYS_ID {
-                msg!("❌ Error: Invalid system program");
-                return Err(ProgramError::InvalidAccountData);
-            }
-
-            // Calculate required space and rent
-            let required_size = std::mem::size_of::<HexagramData>();
-            let rent = Rent::get()?;
-            let lamports = rent.minimum_balance(required_size);
-
-            msg!("Creating storage account...");
-            msg!("Required space: {} bytes", required_size);
-            msg!("Required lamports: {}", lamports);
-
-            // Find PDA seeds
-            let seeds = &[
-                b"hexagram",
-                payer_account.key.as_ref(),
-            ];
-            let (pda, bump_seed) = Pubkey::find_program_address(seeds, pid);
-
-            // Verify the derived PDA matches our storage account
-            if pda != *storage_account.key {
-                msg!("❌ Error: Storage account does not match PDA");
-                msg!("Expected: {}", pda);
-                msg!("Got: {}", storage_account.key);
-                return Err(ProgramError::InvalidArgument);
-            }
-
-            // Create the storage account using invoke_signed
-            let create_account_ix = system_instruction::create_account(
-                payer_account.key,
-                storage_account.key,
-                lamports,
-                required_size as u64,
-                pid,
-            );
-
-            let signer_seeds = &[
-                b"hexagram",
-                payer_account.key.as_ref(),
-                &[bump_seed],
-            ];
-
-            invoke_signed(
-                &create_account_ix,
-                &[
-                    payer_account.clone(),
-                    storage_account.clone(),
-                    system_program.clone(),
-                ],
-                &[signer_seeds],
-            )?;
-            
-            // Initialize the account data
-            msg!("Initializing storage account data...");
-            let hexagram = HexagramData {
-                lines: [0u8; 6],
-                ascii_art: [0u8; ASCII_ART_SIZE],
-                timestamp: 0,
-                is_initialized: true,
-            };
-            
-            hexagram.serialize(&mut &mut storage_account.try_borrow_mut_data()?[..])?;
-            msg!("✓ Storage account initialized successfully");
-            Ok(())
-        }
-        
-        // Callback instruction (1)
-        1 => {
-            msg!("Processing Callback instruction");
-            // Pass the raw data after the discriminator byte to handle_callback
-            let callback_data = &data[1..];
-            msg!("Callback data length: {}", callback_data.len());
-            process_callback(pid, accs, callback_data)
-        }
-        
-        // Unknown instruction
-        _ => {
-            msg!("❌ Error: Unknown instruction discriminator: {}", data[0]);
-            Err(CallbackError::InvalidInstruction.into())
+        },
+        Err(_) => {
+            // If deserialization fails, assume it's a raw callback from Bonsol
+            msg!("Processing raw callback data");
+            process_callback(pid, accs, data)
         }
     }
 }
@@ -218,26 +207,26 @@ pub fn process_callback(pid: &Pubkey, accs: &[AccountInfo], data: &[u8]) -> Prog
         msg!("  Is Writable: {}", acc.is_writable);
     }
     
-    // We need at least 2 accounts:
-    // 1. Execution account (for validation)
+    // We need at least 3 accounts:
+    // 0. Execution account (for validation)
+    // 1. Bonsol program account
     // 2. Storage account (for hexagram data)
-    if accs.len() < 2 {
-        msg!("❌ Error: Insufficient accounts. Need at least 2 accounts (execution and storage)");
+    if accs.len() < 3 {
+        msg!("❌ Error: Insufficient accounts. Need at least 3 accounts (execution, bonsol, and storage)");
         return Err(CallbackError::InsufficientAccounts.into());
     }
     
-    let storage_account = &accs[1];
+    // Find our storage account - it should be the one owned by our program
+    let storage_account = accs.iter().find(|acc| acc.owner == pid)
+        .ok_or_else(|| {
+            msg!("❌ Error: Could not find storage account owned by our program");
+            ProgramError::IncorrectProgramId
+        })?;
     
     // Verify the storage account is writable
     if !storage_account.is_writable {
         msg!("❌ Error: Storage account must be writable");
         return Err(ProgramError::InvalidAccountData);
-    }
-    
-    // Verify the storage account is owned by our program
-    if storage_account.owner != pid {
-        msg!("❌ Error: Storage account must be owned by this program");
-        return Err(ProgramError::IncorrectProgramId);
     }
     
     // Verify the storage account is rent exempt
@@ -259,27 +248,8 @@ pub fn process_callback(pid: &Pubkey, accs: &[AccountInfo], data: &[u8]) -> Prog
     // Log the raw data for debugging
     msg!("Raw callback data: {:?}", data);
     
-    // The first byte should be 1 (Callback variant index)
-    let stripped = if data.len() > 0 && data[0] == 1 {
-        match data.get(1..) {
-            Some(s) => {
-                msg!("✓ Successfully stripped instruction byte");
-                msg!("📦 Stripped data length: {}", s.len());
-                s
-            },
-            None => {
-                msg!("❌ Error: Invalid instruction data - empty after stripping");
-                return Err(CallbackError::InvalidInstruction.into());
-            }
-        }
-    } else {
-        msg!("❌ Error: Invalid instruction data - expected first byte to be 1");
-        msg!("First byte: {:?}", data.get(0));
-        return Err(CallbackError::InvalidInstruction.into());
-    };
-    
     msg!("🔄 Processing callback...");
-    let cb_data: BonsolCallback = handle_callback(BITORACLE_ICHING_IMAGE_ID, &accs[0].key, accs, stripped)?;
+    let cb_data: BonsolCallback = handle_callback(BITORACLE_ICHING_IMAGE_ID, &accs[0].key, accs, data)?;
     msg!("✓ Callback processed successfully");
     msg!("📦 Input digest length: {}", cb_data.input_digest.len());
     msg!("📦 Committed outputs length: {}", cb_data.committed_outputs.len());
@@ -291,17 +261,26 @@ pub fn process_callback(pid: &Pubkey, accs: &[AccountInfo], data: &[u8]) -> Prog
         msg!("  First byte: 0x{:02x}", out[0]);
     }
     
-    if out.len() != 54 || out[0] != 0xaa {
-        msg!("❌ Error: Invalid output format");
-        msg!("  Expected length: 54, got: {}", out.len());
-        if out.len() > 0 {
-            msg!("  Expected first byte: 0xaa, got: 0x{:02x}", out[0]);
-        }
+    // Look for our marker byte (0xaa) in the output
+    let marker_pos = out.iter().position(|&x| x == 0xaa)
+        .ok_or_else(|| {
+            msg!("❌ Error: Could not find marker byte 0xaa in output");
+            CallbackError::InvalidHexagramData
+        })?;
+    
+    msg!("Found marker byte at position {}", marker_pos);
+    
+    // Ensure we have enough data after the marker
+    if out.len() < marker_pos + 54 {
+        msg!("❌ Error: Insufficient data after marker");
+        msg!("  Available: {} bytes", out.len() - marker_pos);
+        msg!("  Required: 54 bytes");
         return Err(CallbackError::InvalidHexagramData.into());
     }
     
+    // Extract line values (6 bytes after marker)
     let mut lines = [0u8; 6];
-    lines.copy_from_slice(&out[1..7]);
+    lines.copy_from_slice(&out[marker_pos + 1..marker_pos + 7]);
     msg!("📊 Hexagram lines: {:?}", lines);
     
     if !lines.iter().all(|&x| (6..=9).contains(&x)) {
@@ -313,7 +292,7 @@ pub fn process_callback(pid: &Pubkey, accs: &[AccountInfo], data: &[u8]) -> Prog
     
     msg!("🎨 Processing ASCII art...");
     let mut ascii_art = [0u8; ASCII_ART_SIZE];
-    let ascii_slice = &out[7..];
+    let ascii_slice = &out[marker_pos + 7..marker_pos + 7 + ASCII_ART_SIZE];
     msg!("  ASCII slice length: {}", ascii_slice.len());
     
     if ascii_slice.len() != ASCII_ART_SIZE {
@@ -325,6 +304,13 @@ pub fn process_callback(pid: &Pubkey, accs: &[AccountInfo], data: &[u8]) -> Prog
     
     ascii_art.copy_from_slice(ascii_slice);
     msg!("✓ ASCII art processed successfully");
+    
+    // Log the ASCII art visualization
+    msg!("Hexagram visualization (bottom to top):");
+    let ascii_str = std::str::from_utf8(&ascii_art).unwrap_or("Invalid UTF-8");
+    for line in ascii_str.lines() {
+        msg!("  {}", line);
+    }
     
     // Get timestamp directly from sysvar without needing account
     let timestamp = Clock::get()?.unix_timestamp;
