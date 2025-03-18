@@ -6,7 +6,7 @@
 
 1. `bonsol` installed and in your PATH
 2. Rust and Cargo ([rustup.rs](https://rustup.rs))
-3. AWS credentials (if not using local deployment)
+3. AWS credentials (also tested with locally hosted opensource minio)
 4. Solana CLI tools
 5. Local validator running (see [Validator Setup](#-validator-setup))
 6. Callback program deployed (see [Callback Setup](#-callback-setup))
@@ -41,7 +41,8 @@ source images/8bitoracle-iching/.env
 images/8bitoracle-iching/scripts/01-build.sh
 
 # Start local validator (will rebuild onchain programs)
-bin/validator.sh
+# -r to reset any previously deployed zk programs
+bin/validator.sh -r
 
 # In a new terminal, deploy using locally built binaries (recommended with debug)
 images/8bitoracle-iching/scripts/02-deploy.sh --local --debug
