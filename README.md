@@ -13,6 +13,37 @@ Do not use `node_keypair.json` in production, it is for local development only.
 * Flat buffers 24.3.25
 * For running the prover x86_64-linux due to (stark to snark tooling)[https://github.com/risc0/risc0/commit/7c6101f925e8fd1b3de09654941f0608d4459a2b]
 
+## Program ID Verification and Setup
+Before deploying the callback program, you must ensure the program ID in the source code matches your keypair:
+
+1. Get your program ID from the keypair:
+```bash
+solana-keygen pubkey onchain/8bitoracle-iching-callback/scripts/program-keypair.json | cat
+```
+
+2. Open the callback program source:
+```bash
+code onchain/8bitoracle-iching-callback/src/lib.rs
+# or use your preferred editor
+```
+
+3. Update the program ID in lib.rs:
+- Find the line starting with `solana_program::declare_id!`
+- Replace the existing program ID with your keypair's program ID
+- Example:
+```rust
+// Update this line with your program ID
+solana_program::declare_id!("2gPzr1AjyYT8JqAndyTDMDUsQsH8y3tc9CuKUtKA2Uv1");
+```
+
+4. Save lib.rs and rebuild the program:
+```bash
+cd onchain/8bitoracle-iching-callback
+cargo build-sbf
+```
+
+**IMPORTANT**: The program ID in lib.rs MUST match your keypair's program ID, or deployment will fail. This step cannot be automated and must be done manually.
+
 ## Development vs Production Mode
 
 ### RISC0_DEV_MODE Behavior

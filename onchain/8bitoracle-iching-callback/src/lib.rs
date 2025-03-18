@@ -17,8 +17,8 @@ use {
     thiserror::Error,
 };
 
-// Add this line to declare the program ID
-solana_program::declare_id!("6yx54uNRbsyCzfwLyKEC5xuzjiN7jW5tovmMgGWkmk2m");
+// Update program ID to match keypair
+solana_program::declare_id!("2gPzr1AjyYT8JqAndyTDMDUsQsH8y3tc9CuKUtKA2Uv1");
 
 // The expected image ID for our 8BitOracle I Ching program
 pub const BITORACLE_ICHING_IMAGE_ID: &str = "83fd7b6a7011b7b842f9ddc83dc7c470a0d4fb71fb6c8dd3064387bac21fd8de";

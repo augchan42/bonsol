@@ -8,7 +8,8 @@
 2. Rust and Cargo ([rustup.rs](https://rustup.rs))
 3. AWS credentials (if not using local deployment)
 4. Solana CLI tools
-5. Callback program deployed (see [Callback Setup](#-callback-setup))
+5. Local validator running (see [Validator Setup](#-validator-setup))
+6. Callback program deployed (see [Callback Setup](#-callback-setup))
 
 > ℹ️ **Note:** Run all commands from the project root directory (`~/forked-projects/bonsol` or equivalent)
 
@@ -17,6 +18,7 @@
 1. Make scripts executable:
 ```bash
 chmod +x images/8bitoracle-iching/scripts/*.sh
+chmod +x bin/*.sh
 ```
 
 2. Set up environment:
@@ -35,10 +37,13 @@ source images/8bitoracle-iching/.env
 
 3. Build and deploy:
 ```bash
-# Build everything
+# First build the I Ching program
 images/8bitoracle-iching/scripts/01-build.sh
 
-# Deploy using locally built binaries (recommended with debug)
+# Start local validator (will rebuild onchain programs)
+bin/validator.sh
+
+# In a new terminal, deploy using locally built binaries (recommended with debug)
 images/8bitoracle-iching/scripts/02-deploy.sh --local --debug
 ```
 
@@ -54,28 +59,29 @@ images/8bitoracle-iching/scripts/04-execute.sh --local --debug
 ## 🔄 Script Inner Workings
 
 ### 1. Build (`01-build.sh`)
-Handles the complete build process in three stages:
+The build process involves two parts:
 
-#### Onchain Programs
-```bash
-# Build Solana programs
-cargo build-sbf
-```
-- Main Bonsol program
-- Example program
-- I Ching callback program
+#### Main Build Script
+The `01-build.sh` script:
+- Cleans ALL target directories (including onchain programs)
+- Rebuilds the I Ching program
+- Optionally rebuilds Bonsol workspace
 
-#### Bonsol Workspace (Optional)
 ```bash
 # With --rebuild-bonsol flag
-cargo build --workspace
+./01-build.sh --rebuild-bonsol
+
+# Without workspace rebuild
+./01-build.sh
 ```
 
-#### I Ching Program
-```bash
-# Main program build
-cargo build
-```
+#### Validator Setup
+The validator script (`bin/validator.sh`):
+- Rebuilds all onchain programs using `cargo build-sbf`
+- Starts a local Solana validator
+- Must be run after `01-build.sh` to ensure onchain programs are rebuilt
+
+> ⚠️ **Important**: Run `01-build.sh` first, then start the validator to ensure onchain programs are properly rebuilt
 
 ### 2. Deploy (`02-deploy.sh`)
 Deploys the built program:
@@ -127,18 +133,69 @@ BUCKET=8bitoracle
 | `--debug` | Enable verbose logging (recommended for troubleshooting) |
 | `--rebuild-bonsol` | Rebuild entire workspace |
 
-## 🔐 Callback Setup
+## 🎯 Callback Setup
 
-1. Deploy the callback program:
+### Program ID Verification
+Unlike the sample callback program (`exay1T7QqsJPNcwzMiWubR6vZnqrgM16jZRraHgqBGG`) which is a static reference example, this I Ching callback program is meant to be deployed individually by users. Each deployment requires its own unique program ID because:
+
+- On Solana, program IDs are derived from the deployment keypair
+- Two users cannot deploy to the same program ID
+- Each user needs their own keypair and corresponding program ID
+
+This is why we need a manual verification step:
+1. The program ID in the source code must match your keypair's program ID
+2. This can't be automated at runtime since it's part of the compiled code
+3. If they don't match, deployment will fail because Solana verifies program ownership
+
+### Storage Model
+This is a sample implementation with simplified storage:
+- Each I Ching reading uses a new PDA (Program Derived Address) storage account
+- Each storage account holds exactly one hexagram reading
+- No historical readings are maintained
+- Each new reading creates a new storage account
+- This is intentionally simplified for demonstration purposes
+
+### Setup Steps
+1. Get and verify the program ID:
+```bash
+# Get the program ID from your keypair
+solana-keygen pubkey onchain/8bitoracle-iching-callback/scripts/program-keypair.json | cat
+
+# Update the program ID in lib.rs to match your keypair
+code onchain/8bitoracle-iching-callback/src/lib.rs
+# Find and update the line:
+# solana_program::declare_id!("your_program_id_here");
+```
+
+2. Deploy the callback program:
 ```bash
 cd onchain/8bitoracle-iching-callback
 cargo build-sbf
 solana program deploy target/deploy/bitoracle_iching_callback.so
 ```
 
-2. Verify deployment:
+3. Verify deployment:
 ```bash
 solana program show --programs
+```
+
+> ⚠️ **Important**: The program ID in `lib.rs` MUST match your keypair's program ID before building and deploying. This is a manual step that must be completed for successful deployment.
+
+## 🌐 Validator Setup
+
+1. Start the local validator:
+```bash
+bin/validator.sh
+```
+This script:
+- Builds all onchain programs
+- Starts a local Solana validator
+- Must be running before deploying or executing programs
+
+2. Verify validator is running:
+```bash
+solana config get
+solana cluster-version
 ```
 
 ## ⚠️ Important Notes
