@@ -9,6 +9,29 @@ The program:
 2. Parses hexagram data (lines and ASCII art)
 3. Stores readings in Program Derived Addresses (PDAs)
 
+## Program ID Verification
+
+Before deploying the program, you must ensure the program ID in the source code matches your keypair:
+
+1. Get your program ID:
+```bash
+solana-keygen pubkey scripts/program-keypair.json | cat
+```
+
+2. Update the program ID in `src/lib.rs`:
+```rust
+// Update this line with your program ID
+solana_program::declare_id!("your_program_id_here");
+```
+
+3. Build and deploy:
+```bash
+cargo build-sbf
+solana program deploy target/deploy/bitoracle_iching_callback.so
+```
+
+> ⚠️ **Important**: The program ID in `lib.rs` MUST match your keypair's program ID, or deployment will fail. This is a required manual step that cannot be automated.
+
 ## Program Derived Addresses (PDAs)
 
 ### What are PDAs?
@@ -71,28 +94,17 @@ cd scripts && npm run derive-pda <program_id> <execution_account>
 ### Helper Scripts
 The `scripts` directory contains:
 - `derive-pda.ts`: TypeScript script to calculate PDAs
-- `generate-program-id.sh`: Generates program ID and updates configs
 - `package.json` & `tsconfig.json`: TypeScript configuration
 
 ## Usage
 
-### 1. Generate Program ID
-```bash
-cd scripts
-./generate-program-id.sh
-```
-
-### 2. Calculate Storage PDA
-```bash
-npm run derive-pda <program_id> <execution_account>
-```
-
-### 3. Deploy Program
+### 1. Deploy Program
+After verifying the program ID (see [Program ID Verification](#program-id-verification)):
 ```bash
 solana program deploy target/deploy/bitoracle_iching_callback.so
 ```
 
-### 4. Execute I Ching Reading
+### 2. Execute I Ching Reading
 ```bash
 # From project root
 ./images/8bitoracle-iching/scripts/03-generate-input-with-callback.sh

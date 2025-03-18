@@ -198,6 +198,55 @@ solana config get
 solana cluster-version
 ```
 
+## 🔑 Keypair Overview
+
+The project uses several keypairs located in `onchain/8bitoracle-iching-callback/scripts/`:
+
+### program-keypair.json
+- Determines the callback program's ID on Solana
+- Used to deploy the program
+- Program ID in `lib.rs` must match this keypair's public key
+- Used by `validator.sh` during program deployment
+```bash
+# Get program ID
+solana-keygen pubkey scripts/program-keypair.json
+```
+
+### storage-keypair.json
+- Used to derive PDAs for storing hexagram readings
+- Each new reading creates a new storage account
+- PDA derivation: `[b"hexagram", execution_account.key]`
+- Used by `03-generate-input-with-callback.sh`
+```bash
+# View storage account
+solana account <STORAGE_PDA>
+```
+
+### test-execution-keypair.json
+- The account requesting the I Ching reading
+- Signs the execution request
+- Results are associated with this account
+- Used by both input generation and execution scripts
+```bash
+# View execution account
+solana account <EXECUTION_ACCOUNT>
+```
+
+### test-payer-keypair.json
+- Pays for all transaction fees and account creation
+- Must have sufficient SOL balance
+- Used by all transaction-submitting scripts
+- Automatically funded in local validator
+```bash
+# Check payer balance
+solana balance $(solana-keygen pubkey scripts/test-payer-keypair.json)
+```
+
+> ⚠️ **Important**: These are test keypairs for local development. In production, you should:
+- Generate new keypairs for each deployment
+- Never share or commit private keys
+- Maintain separate keypairs for different environments
+
 ## ⚠️ Important Notes
 
 > 🏠 **Working Directory**
