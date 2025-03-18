@@ -79,11 +79,21 @@ pub fn process(pid: &Pubkey, accs: &[AccountInfo], data: &[u8]) -> ProgramResult
     msg!("📝 Number of accounts: {}", accs.len());
     msg!("📦 Input data length: {}", data.len());
     
-    let instruction = CallbackInstruction::try_from_slice(data)
-        .map_err(|_| CallbackError::InvalidInstructionData)?;
-        
-    match instruction {
-        CallbackInstruction::Initialize => {
+    // Log raw instruction data for debugging
+    msg!("📦 Raw instruction data: {:?}", data);
+    if data.len() > 0 {
+        msg!("First byte (instruction discriminator): 0x{:02x}", data[0]);
+    }
+    
+    // Split instruction data into discriminator and payload
+    if data.is_empty() {
+        msg!("❌ Error: Empty instruction data");
+        return Err(CallbackError::InvalidInstructionData.into());
+    }
+    
+    match data[0] {
+        // Initialize instruction (0)
+        0 => {
             msg!("Processing Initialize instruction");
             if accs.len() != 3 {
                 msg!("❌ Error: Initialize requires exactly 3 accounts");
@@ -171,9 +181,20 @@ pub fn process(pid: &Pubkey, accs: &[AccountInfo], data: &[u8]) -> ProgramResult
             msg!("✓ Storage account initialized successfully");
             Ok(())
         }
-        CallbackInstruction::Callback(callback_data) => {
+        
+        // Callback instruction (1)
+        1 => {
             msg!("Processing Callback instruction");
-            process_callback(pid, accs, &callback_data)
+            // Pass the raw data after the discriminator byte to handle_callback
+            let callback_data = &data[1..];
+            msg!("Callback data length: {}", callback_data.len());
+            process_callback(pid, accs, callback_data)
+        }
+        
+        // Unknown instruction
+        _ => {
+            msg!("❌ Error: Unknown instruction discriminator: {}", data[0]);
+            Err(CallbackError::InvalidInstruction.into())
         }
     }
 }
@@ -235,16 +256,26 @@ pub fn process_callback(pid: &Pubkey, accs: &[AccountInfo], data: &[u8]) -> Prog
         return Err(CallbackError::AccountTooSmall.into());
     }
     
-    let stripped = match data.get(1..) {
-        Some(s) => {
-            msg!("✓ Successfully stripped instruction byte");
-            msg!("📦 Stripped data length: {}", s.len());
-            s
-        },
-        None => {
-            msg!("❌ Error: Invalid instruction data - empty or too short");
-            return Err(CallbackError::InvalidInstruction.into());
+    // Log the raw data for debugging
+    msg!("Raw callback data: {:?}", data);
+    
+    // The first byte should be 1 (Callback variant index)
+    let stripped = if data.len() > 0 && data[0] == 1 {
+        match data.get(1..) {
+            Some(s) => {
+                msg!("✓ Successfully stripped instruction byte");
+                msg!("📦 Stripped data length: {}", s.len());
+                s
+            },
+            None => {
+                msg!("❌ Error: Invalid instruction data - empty after stripping");
+                return Err(CallbackError::InvalidInstruction.into());
+            }
         }
+    } else {
+        msg!("❌ Error: Invalid instruction data - expected first byte to be 1");
+        msg!("First byte: {:?}", data.get(0));
+        return Err(CallbackError::InvalidInstruction.into());
     };
     
     msg!("🔄 Processing callback...");
