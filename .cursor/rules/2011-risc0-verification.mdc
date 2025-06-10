@@ -1,0 +1,126 @@
+---
+description: ENFORCE RISC0 verification standards WHEN verifying proofs TO ensure robust validation and error tracking
+globs: src/**/*.rs
+---
+
+# RISC0 Proof Verification Standards
+
+## Context
+- Applied when implementing proof verification for RISC0 v1.2.1
+- Focuses on robust validation and error handling
+- Ensures consistent verification patterns
+- See 2001-risc0-api for high-level RISC0 integration guidelines
+- See 2002-risc0-types for import standards
+- See 2003-risc0-receipts for proof handling details
+
+## Requirements
+- Implement complete verification flow:
+  - Verify receipt claims and digests
+  - Validate seal bytes and journal contents
+  - Check verifier parameters and exit codes
+  - Handle both Composite and Succinct receipts
+- Follow error handling standards:
+  - Use specific error types for different verification failures
+  - Include detailed context in error messages
+  - Log verification failures with appropriate severity
+  - Track verification metrics
+- Validate proof components:
+  - Check input digest matches expected
+  - Verify journal format and contents
+  - Validate seal bytes integrity
+  - Ensure correct receipt type handling
+- Implement security measures:
+  - Prevent timing attacks in verification
+  - Use constant-time comparison for digests
+  - Validate all input parameters
+  - Handle malformed proofs safely
+- Track verification metrics:
+  - Log verification attempts and results
+  - Track timing for verification steps
+  - Monitor failure rates and types
+  - Record proof size statistics
+
+## Examples
+
+<example>
+// Good: Complete verification flow
+use risc0_zkvm::{Receipt, VerifierContext, sha::Digestible};
+
+fn verify_proof(
+    receipt: &Receipt,
+    expected_input: &[u8],
+) -> Result<(), VerificationError> {
+    // 1. Verify receipt claim
+    let claim = receipt.claim()?;
+    let digest = claim.digest();
+    
+    // 2. Validate input digest
+    let input_digest = sha::digest(expected_input);
+    if !constant_time_eq(&digest, &input_digest) {
+        return Err(VerificationError::InputMismatch);
+    }
+    
+    // 3. Verify receipt based on type
+    match &receipt.inner {
+        InnerReceipt::Succinct(sr) => {
+            verify_succinct_receipt(sr)?;
+        }
+        InnerReceipt::Composite(cr) => {
+            verify_composite_receipt(cr)?;
+        }
+        _ => return Err(VerificationError::UnknownReceiptType),
+    }
+    
+    // 4. Check exit codes
+    let params = receipt.metadata.verifier_parameters;
+    match params.as_bytes() {
+        [0, ..] => Ok(()), // Halted normally
+        [1, code, ..] => Err(VerificationError::Paused(*code)),
+        [2, ..] => Err(VerificationError::SystemLimit),
+        _ => Err(VerificationError::InvalidExitCode),
+    }
+}
+</example>
+
+<example>
+// Good: Verification with metrics
+fn verify_with_metrics(receipt: &Receipt) -> Result<(), VerificationError> {
+    emit_event_with_duration!(MetricEvents::ProofVerification, {
+        let result = verify_proof(receipt);
+        if let Err(ref e) = result {
+            emit_event!(MetricEvents::VerificationFailed,
+                error => e.to_string(),
+                receipt_type => receipt.inner.type_name()
+            );
+        }
+        result
+    }, receipt_type => receipt.inner.type_name())
+}
+</example>
+
+<example type="invalid">
+// Bad: Unsafe verification
+fn verify_unsafe(receipt: &Receipt) -> bool {
+    receipt.claim().is_ok() // Missing proper verification
+    // No input validation
+    // No error handling
+    // No metrics
+}
+</example>
+
+<example type="invalid">
+// Bad: Timing attack vulnerability
+fn verify_timing_leak(digest1: &[u8], digest2: &[u8]) -> bool {
+    digest1 == digest2 // Direct comparison leaks timing
+}
+</example>
+
+## Critical Notes
+<critical>
+- ALWAYS use constant-time comparisons for digests
+- Verify ALL proof components
+- Track verification metrics
+- Handle ALL error cases
+- Use appropriate logging levels
+- Implement proper security measures
+</critical> 

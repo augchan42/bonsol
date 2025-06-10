@@ -1,0 +1,134 @@
+---
+description: EMIT metrics when PROVING with RISC0 v1.2.1 to ENSURE consistent performance monitoring
+globs: src/**/*.rs
+---
+
+# RISC0 Metrics Standards
+
+## Context
+- Applied when implementing proof generation and monitoring
+- Focuses on consistent metrics collection and emission
+- Ensures proper tracking of proof performance
+- See 2001-risc0-api for high-level RISC0 integration guidelines
+- See 2003-risc0-receipts for proof handling details
+
+## Requirements
+- Collect and emit session statistics:
+  - Track total cycles and cycle breakdowns
+  - Monitor segment counts for multi-segment proofs
+  - Record proof sizes (journal, seal)
+  - Track seal and journal sizes for storage requirements
+- Calculate cycle breakdowns:
+  - User cycles: Application computation
+  - Paging cycles: Memory management
+  - Reserved cycles: System operations
+  - Verify total cycles match component sum
+- Track proof sizes and components:
+  - Journal size metrics
+  - Seal size for both Composite and Succinct receipts
+  - Input and output digest sizes
+  - Committed output sizes
+- Use consistent metric names and labels:
+  - Include receipt type in metrics
+  - Label cycle types appropriately
+  - Use consistent units (bytes, cycles)
+  - Add context to metric events
+- Implement proper error tracking:
+  - Log proof generation failures
+  - Track compression errors
+  - Monitor verification failures
+  - Record timing information
+
+## Examples
+
+<example>
+// Good: Complete metrics collection
+fn collect_proof_metrics(info: &ProveInfo, receipt: &Receipt) {
+    // Track cycle counts
+    emit_histogram!(MetricEvents::ProofCycles, info.stats.total_cycles as f64,
+        system => "risc0",
+        cycle_type => "total"
+    );
+    
+    let user_cycles = info.stats.user_cycles;
+    let paging_cycles = info.stats.paging_cycles;
+    let reserved_cycles = info.stats.reserved_cycles;
+    
+    // Verify cycle counts
+    debug_assert!(
+        info.stats.total_cycles == user_cycles + paging_cycles + reserved_cycles,
+        "Cycle counts don't add up"
+    );
+    
+    // Emit component cycle counts
+    emit_histogram!(MetricEvents::ProofCycles, user_cycles as f64,
+        system => "risc0",
+        cycle_type => "user"
+    );
+    
+    // Track proof sizes
+    emit_histogram!(MetricEvents::ProofSize, receipt.journal.bytes.len() as f64,
+        system => "risc0",
+        component => "journal"
+    );
+    
+    // Handle different receipt types
+    match &receipt.inner {
+        InnerReceipt::Composite(cr) => {
+            emit_histogram!(MetricEvents::ProofSize, cr.seal_size() as f64,
+                system => "risc0",
+                component => "seal",
+                receipt_type => "composite"
+            );
+        }
+        InnerReceipt::Succinct(sr) => {
+            emit_histogram!(MetricEvents::ProofSize, sr.seal_size() as f64,
+                system => "risc0",
+                component => "seal",
+                receipt_type => "succinct"
+            );
+        }
+        _ => {
+            error!("Unexpected receipt type");
+        }
+    }
+}
+</example>
+
+<example>
+// Good: Timed operation tracking
+fn process_proof(receipt: Receipt) -> Result<Vec<u8>> {
+    emit_event_with_duration!(MetricEvents::ProofProcessing, {
+        // Process the proof
+        let result = process_inner(&receipt)?;
+        Ok(result)
+    }, receipt_type => receipt.inner.type_name())
+}
+</example>
+
+<example type="invalid">
+// Bad: Missing critical metrics
+fn process_proof(receipt: Receipt) -> Result<Vec<u8>> {
+    let result = process_inner(&receipt)?;
+    // Missing cycle counts
+    // Missing size metrics
+    // No timing information
+    Ok(result)
+}
+</example>
+
+<example type="invalid">
+// Bad: Incorrect metric labeling
+emit_histogram!(MetricEvents::ProofSize, size,  // Missing context
+    type => "seal"  // Inconsistent label naming
+);
+</example>
+
+## Critical Notes
+<critical>
+- ALWAYS verify cycle count totals
+- Track ALL proof components (journal, seal, etc.)
+- Use consistent metric naming
+- Include timing for long operations
+- Add appropriate context to all metrics
+</critical> 

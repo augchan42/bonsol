@@ -1,0 +1,117 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Solana Code Standards
+
+## Context
+- Applied when writing or modifying Solana-related code
+- Focuses on proper import organization and error handling
+- Ensures consistent usage of Solana SDK types and traits
+
+## Requirements
+
+### Import Organization
+- Group Solana imports by functionality
+- Avoid duplicate imports of common types (Pubkey, Keypair, Signer)
+- Prefer single grouped imports over multiple separate ones
+- Use explicit imports for error types
+
+Example of good import organization:
+```rust
+use solana_sdk::{
+    account::Account,
+    commitment_config::CommitmentConfig,
+    instruction::{AccountMeta, Instruction, InstructionError},
+    message::{v0, VersionedMessage},
+    pubkey::Pubkey,
+    signature::{Keypair, Signature},
+    signer::{Signer, SignerError},
+    system_program,
+    transaction::{TransactionError, VersionedTransaction},
+};
+```
+
+### Error Handling
+- Use proper error types from solana_sdk
+- Implement custom errors using thiserror
+- Handle transaction errors with specific error variants
+- Include context in error messages
+- Extract custom error codes when handling program errors
+
+Example of good error handling:
+```rust
+#[derive(Debug, thiserror::Error)]
+pub enum SolanaError {
+    #[error("Transaction failed: {0}")]
+    TransactionError(String),
+    #[error("Custom program error: {0}")]
+    CustomProgramError(u32),
+}
+
+fn extract_custom_error(error: &Error) -> Option<u32> {
+    if let Error { kind: ErrorKind::TransactionError(
+        TransactionError::InstructionError(_, InstructionError::Custom(code))
+    ), .. } = error {
+        Some(*code)
+    } else {
+        None
+    }
+}
+```
+
+### Transaction Handling
+- Use appropriate commitment levels
+- Handle blockhash expiration
+- Track transaction statuses
+- Implement proper signature verification
+- Use appropriate transaction configuration
+
+Example:
+```rust
+let sig = client
+    .send_and_confirm_transaction_with_spinner_and_config(
+        &tx,
+        CommitmentConfig::confirmed(),
+        RpcSendTransactionConfig {
+            skip_preflight: true,
+            ..Default::default()
+        },
+    )
+    .await?;
+```
+
+## Anti-patterns
+
+### Import Anti-patterns
+```rust
+// Bad: Duplicate imports
+use solana_sdk::pubkey::Pubkey;
+use solana_sdk::signature::Keypair;
+use {
+    solana_sdk::{
+        pubkey::Pubkey,  // Duplicate!
+        signature::Keypair,  // Duplicate!
+    }
+};
+```
+
+### Error Handling Anti-patterns
+```rust
+// Bad: Generic error handling
+fn process_transaction() -> Result<(), String> {
+    // Using string errors instead of proper error types
+}
+```
+
+### Transaction Anti-patterns
+```rust
+// Bad: Missing error context
+client.send_transaction(&tx)
+    .map_err(|e| anyhow::anyhow!("Failed"))?;  // Missing error context
+
+// Good: Proper error context
+client.send_transaction(&tx)
+    .map_err(|e| anyhow::anyhow!("Failed to send transaction: {:?}", e))?;
+``` 

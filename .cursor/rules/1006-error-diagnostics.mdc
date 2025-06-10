@@ -1,0 +1,52 @@
+---
+description: ENFORCE error diagnostics standards WHEN handling errors TO ensure comprehensive debugging information
+globs: src/**/*.{rs,ts}
+---
+
+# Error Diagnostics Standards
+
+## Context
+- When implementing error handling
+- When logging errors in critical operations
+- When debugging complex operations
+
+## Requirements
+- Include contextual data in error messages
+- Log both error details and relevant state
+- Provide component-specific error information
+- Track error codes and their meanings
+- Include system state in error logs
+- Log relevant metrics with errors
+- Implement hierarchical error logging
+- Include operation metadata in error context
+- Preserve error chain information
+
+## Examples
+<example>
+```rust
+error!(
+    "Proof verification failed - Details:\n\
+     - Error: {:?}\n\
+     - Input count: {}\n\
+     - Total proof size: {} bytes\n\
+     - Component hashes:\n\
+       * proof_a: {}\n\
+       * proof_b: {}\n\
+     - First input preview: {}",
+    e,
+    input_count,
+    proof_size,
+    hex::encode(hash_a),
+    hex::encode(hash_b),
+    hex::encode(first_input)
+);
+```
+Provides comprehensive error context with relevant state information
+</example>
+
+<example type="invalid">
+```rust
+error!("Verification failed: {:?}", e);
+```
+Lacks context and state information needed for debugging
+</example> 

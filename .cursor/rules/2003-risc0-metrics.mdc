@@ -1,0 +1,129 @@
+---
+description: EMIT metrics when PROVING with RISC0 v1.2.1 to ENSURE consistent performance monitoring
+globs: src/**/*.rs
+---
+
+# RISC0 v1.2.1 Metrics Standards
+
+## Context
+- When proving computations with RISC0 v1.2.1
+- When monitoring performance and resource usage
+- When debugging proof generation issues
+
+## Requirements
+- Always collect and emit session statistics from ProveInfo
+- Track both cycle counts and proof sizes
+- Calculate and log percentage breakdowns of cycle types
+- Monitor segment counts for multi-segment proofs
+- Track seal and journal sizes for proof storage requirements
+- Use tracing or logging framework consistently
+
+## Examples
+
+<example>
+```rust
+use tracing;
+
+fn emit_proof_metrics(info: ProveInfo) -> Result<()> {
+    // Basic session statistics
+    tracing::info!("Session segments: {}", info.stats.segments);
+    
+    // Cycle counts
+    tracing::info!("Total cycles: {}", info.stats.total_cycles);
+    
+    // Calculate percentages
+    let pct = |cycles: u64| {
+        cycles as f64 / info.stats.total_cycles as f64 * 100.0
+    };
+    
+    tracing::info!(
+        "User cycles: {} ({:.2}%)", 
+        info.stats.user_cycles,
+        pct(info.stats.user_cycles)
+    );
+    
+    tracing::info!(
+        "Paging cycles: {} ({:.2}%)", 
+        info.stats.paging_cycles,
+        pct(info.stats.paging_cycles)
+    );
+    
+    tracing::info!(
+        "Reserved cycles: {} ({:.2}%)", 
+        info.stats.reserved_cycles,
+        pct(info.stats.reserved_cycles)
+    );
+    
+    // Proof sizes
+    tracing::info!(
+        "Journal size: {} bytes", 
+        info.receipt.journal.len()
+    );
+    
+    // Handle different receipt types correctly
+    match &info.receipt.inner {
+        InnerReceipt::Composite(cr) => {
+            tracing::info!(
+                "Composite seal size: {} bytes", 
+                cr.seal_size()  // Use seal_size() for composite receipts
+            );
+        }
+        InnerReceipt::Succinct(sr) => {
+            tracing::info!(
+                "Succinct seal size: {} bytes", 
+                sr.seal_size()
+            );
+        }
+        InnerReceipt::Groth16(gr) => {
+            tracing::info!(
+                "Groth16 seal size: {} bytes", 
+                gr.seal_size()
+            );
+        }
+        InnerReceipt::Fake(_) => {
+            tracing::info!("Fake receipt (no seal)");
+        }
+    }
+    
+    Ok(())
+}
+```
+
+Usage in proving workflow:
+```rust
+let prover = get_prover_server(&ProverOpts::default())?;
+let prove_info = prover.prove_session(&ctx, &session)?;
+emit_proof_metrics(prove_info)?;
+```
+</example>
+
+<example type="invalid">
+```rust
+// DON'T: Incorrect seal size access
+fn wrong_seal_access(info: ProveInfo) {
+    if let InnerReceipt::Composite(cr) = &info.receipt.inner {
+        println!("Size: {}", cr.get_seal_bytes().len());  // ❌ Wrong - get_seal_bytes() doesn't exist
+    }
+}
+
+// DON'T: Missing receipt type handling
+fn incomplete_metrics(info: ProveInfo) {
+    println!("Total cycles: {}", info.stats.total_cycles);
+    // Missing cycle breakdowns, segment count, and proof sizes
+}
+
+// DON'T: Inconsistent logging
+fn mixed_logging(info: ProveInfo) {
+    tracing::info!("Cycles: {}", info.stats.total_cycles);
+    println!("Segments: {}", info.stats.segments); // Use tracing consistently
+}
+```
+</example>
+
+## Critical Notes
+- Always verify that total_cycles = user_cycles + paging_cycles + reserved_cycles
+- Monitor segment count to detect unexpected proof splitting
+- Track seal and journal sizes to manage storage requirements
+- Use consistent logging framework throughout the codebase
+- For CompositeReceipt, always use seal_size() to get total seal size, never try to access seal bytes directly
+- Different receipt types (Composite, Succinct, Groth16) have different ways to access their seals - always match on InnerReceipt type 

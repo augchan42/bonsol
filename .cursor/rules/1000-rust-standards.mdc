@@ -1,0 +1,108 @@
+---
+description: ENFORCE Rust code standards WHEN writing or modifying Rust code TO maintain consistency and safety
+globs: **/*.rs
+alwaysApply: true
+---
+
+# Rust Code Standards
+
+## Context
+- Applied when writing or modifying Rust code in the Bonsol project
+- Focuses on safety, performance, and maintainability
+
+## Requirements
+- Use Rust 2021 edition
+- Follow workspace-wide lints defined in Cargo.toml
+- Deny the following clippy lints:
+  - clone_on_ref_ptr
+  - missing_const_for_fn
+  - trivially_copy_pass_by_ref
+- Use explicit error types with thiserror
+- Implement proper error handling using anyhow for application code
+- Use flatbuffers 24.3.25 for serialization
+- Properly document public APIs with rustdoc
+- Use async/await with tokio for async operations
+- Follow RISC0 zkVM patterns for zero-knowledge proofs
+- Use solana-sdk ~2.0 for Solana interactions
+- Use structured logging with tracing crate:
+  - Import all required macros explicitly: error, warn, info, debug, trace
+  - Use appropriate log levels:
+    - error! for unrecoverable errors
+    - warn! for recoverable issues that need attention
+    - info! for important state changes and operations
+    - debug! for detailed information useful during development
+    - trace! for very detailed debugging of specific operations
+  - Include context in log messages (e.g., IDs, sizes, states)
+  - Use structured fields when logging complex data
+  - Use emit_event! for metrics and event tracking
+  - Use emit_event_with_duration! for timed operations
+
+## Examples
+
+<example>
+// Good error handling
+#[derive(Debug, thiserror::Error)]
+pub enum BonsolError {
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+    #[error("Execution failed: {0}")]
+    ExecutionFailed(#[from] anyhow::Error),
+}
+
+async fn process_input(input: &[u8]) -> Result<(), BonsolError> {
+    // Implementation
+}
+</example>
+
+<example type="invalid">
+// Bad: Using String for errors
+fn process_input(input: &[u8]) -> Result<(), String> {
+    // Implementation
+}
+</example>
+
+<example>
+// Good: Proper async/await usage
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    // Implementation
+}
+</example>
+
+<example type="invalid">
+// Bad: Blocking operations in async context
+async fn process() {
+    std::thread::sleep(std::time::Duration::from_secs(1));
+}
+</example>
+
+<example>
+// Good: Proper tracing usage with context
+use tracing::{error, info, warn, debug, trace};
+
+async fn process_proof(proof_data: &[u8], id: &str) {
+    debug!("Processing proof ID: {}", id);
+    trace!("Proof data size: {} bytes", proof_data.len());
+    
+    if proof_data.is_empty() {
+        error!("Empty proof data received for ID: {}", id);
+        return;
+    }
+    
+    emit_event_with_duration!(MetricEvents::ProofProcessing, {
+        // processing logic here
+    }, proof_id => id);
+    
+    info!("Successfully processed proof {}", id);
+}
+</example>
+
+<example type="invalid">
+// Bad: Missing trace import and poor context
+use tracing::{info};
+
+async fn process_proof(proof_data: &[u8], id: &str) {
+    trace!("Processing"); // Won't compile - trace not imported
+    info!("Done"); // Poor context - no ID or details
+}
+</example>

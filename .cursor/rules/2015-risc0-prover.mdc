@@ -1,0 +1,155 @@
+---
+description: ENFORCE RISC0 prover creation patterns WHEN initializing provers TO ensure correct API usage and thread safety
+globs: src/**/*.rs
+---
+
+# RISC0 Prover Creation Standards
+
+## Context
+- Applied when creating RISC0 v1.2.1 provers
+- Focuses on proper initialization and usage patterns
+- Ensures correct API usage for both dev and production modes
+- Used in CPU/GPU intensive blocking operations
+- Must be used within tokio::task::spawn_blocking for async contexts
+
+## Requirements
+- Use public API types and constructors:
+  ```rust
+  use risc0_zkvm::{ProverServer, ProverOpts, get_prover_server};
+  use std::rc::Rc;
+  ```
+- NEVER use private modules like `host::server::prove`
+- Create prover using `get_prover_server` with `ProverOpts`
+- Dev mode is automatically handled by `ProverOpts`
+- Use `Rc` since prover is only used in blocking contexts
+- Keep prover creation simple - use default options unless specific needs
+
+### Prover Creation Pattern
+```rust
+pub fn get_risc0_prover() -> Result<Rc<dyn ProverServer>> {
+    info!("Initializing RISC0 prover");
+    let opts = ProverOpts::default();
+    get_prover_server(&opts)
+}
+```
+
+### Usage Pattern in Async Contexts
+```rust
+// In async functions, ALWAYS use spawn_blocking:
+let result = tokio::task::spawn_blocking(move || {
+    let prover = get_risc0_prover()?;
+    // Use prover for CPU/GPU intensive operations
+    prover.prove_session(&ctx, &session)
+}).await?;
+
+// NEVER try to move prover into tokio::spawn:
+// BAD - This will fail to compile:
+tokio::spawn(async move {
+    let prover = get_risc0_prover()?; // Error: Rc is not Send
+    prover.prove_session(&ctx, &session)
+});
+```
+
+### Usage Pattern in CLI/Blocking Contexts
+```rust
+// In blocking contexts (like CLI), use directly:
+let prover = get_risc0_prover()?;
+let result = prover.prove_session(&ctx, &session)?;
+```
+
+### Logging Standards
+- Log prover initialization start
+- Include relevant context in error cases
+- Use appropriate log levels:
+  - info: Initialization
+  - error: Creation failures
+  - trace: Detailed operations
+
+### Blocking Context Usage
+- Always use within `spawn_blocking` for async operations
+- Use `Rc` since prover is not shared across async tasks
+- Keep prover operations contained within blocking contexts
+- Clean up resources properly after use
+
+## Examples
+
+<example>
+// Good: Prover creation and usage in async context
+use risc0_zkvm::{ProverServer, ProverOpts, get_prover_server};
+use std::rc::Rc;
+use anyhow::Result;
+
+pub fn get_risc0_prover() -> Result<Rc<dyn ProverServer>> {
+    info!("Initializing RISC0 prover");
+    let opts = ProverOpts::default();
+    get_prover_server(&opts)
+}
+
+// Usage in async context with spawn_blocking
+async fn prove_something(session: Session) -> Result<Receipt> {
+    tokio::task::spawn_blocking(move || {
+        let prover = get_risc0_prover()?;
+        let ctx = VerifierContext::default();
+        prover.prove_session(&ctx, &session)
+    }).await?
+}
+</example>
+
+<example>
+// Good: Proper error handling in blocking context
+fn risc0_prove(
+    memory_image: MemoryImage,
+    inputs: Vec<ProgramInput>,
+) -> Result<(Journal, Digest, SuccinctReceipt<ReceiptClaim>)> {
+    let prover = get_risc0_prover()?;
+    let ctx = VerifierContext::default();
+    
+    let info = emit_event_with_duration!(MetricEvents::ProofGeneration, {
+        prover.prove_session(&ctx, &session)
+    }, system => "risc0")?;
+    
+    // Process result...
+    Ok((info.journal, digest, receipt))
+}
+</example>
+
+<example type="invalid">
+// Bad: Using prover outside blocking context
+async fn prove_wrong(session: Session) -> Result<Receipt> {
+    let prover = get_risc0_prover()?;
+    prover.prove_session(&ctx, &session) // Wrong: CPU intensive work in async context
+}
+</example>
+
+<example type="invalid">
+// Bad: Trying to share prover across async tasks
+async fn prove_shared(sessions: Vec<Session>) {
+    let prover = Arc::new(get_risc0_prover()?); // Wrong: trying to use Arc
+    let handles: Vec<_> = sessions.into_iter()
+        .map(|session| {
+            let prover = prover.clone();
+            tokio::spawn(async move { // Wrong: tokio::spawn instead of spawn_blocking
+                prover.prove_session(&ctx, &session)
+            })
+        })
+        .collect();
+}
+</example>
+
+## Critical Notes
+<critical>
+- ALWAYS use get_prover_server with ProverOpts
+- ALWAYS use within spawn_blocking for async operations
+- NEVER try to share prover across async tasks with tokio::spawn
+- NEVER use private modules from risc0_zkvm::host
+- Keep prover creation simple - use default options unless specific needs
+- Use proper logging for initialization
+- Maintain consistent error handling patterns
+- Clean up resources after use
+- Remember prover operations are CPU/GPU intensive
+- In async contexts:
+  1. ALWAYS use tokio::task::spawn_blocking
+  2. Create new prover inside the blocking task
+  3. Keep prover operations contained in blocking context
+  4. Don't try to share provers across async boundaries
+</critical>

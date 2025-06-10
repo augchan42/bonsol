@@ -1,0 +1,129 @@
+---
+description: ENFORCE code modification standards WHEN changing existing code TO prevent unnecessary complexity and regressions
+globs: src/**/*.{rs,ts,js,py}
+---
+
+# Code Modification Standards
+
+## Context
+- When modifying existing, working code
+- When adding new features to existing systems
+- When attempting to improve or optimize code
+- When fixing bugs or addressing issues
+
+## Requirements
+
+### General Principles
+- Do not modify working code without clear requirements
+- Document the reason for any significant changes
+- Preserve existing behavior unless explicitly required to change it
+- Keep changes minimal and focused
+- Test changes against existing use cases
+
+### Before Modifying
+- Understand why the current implementation works
+- Document the specific problem being solved
+- Verify the change is actually necessary
+- Consider the impact on existing consumers
+- Check if the change belongs at a different layer
+
+### During Implementation
+- Make incremental changes
+- Maintain existing patterns where possible
+- Add clear documentation for changes
+- Preserve existing interfaces
+- Add new paths rather than modifying existing ones
+
+### After Changes
+- Verify all existing use cases still work
+- Document any behavioral changes
+- Update tests to cover new cases
+- Review for unnecessary complexity
+- Validate performance impact
+
+## Examples
+
+<example>
+```rust
+// Good: Adding new functionality without modifying existing
+struct DataProcessor {
+    // ... existing fields ...
+}
+
+impl DataProcessor {
+    // Existing method preserved
+    pub fn process(&self, data: &[u8]) -> Result<Output> {
+        // ... existing implementation ...
+    }
+    
+    // New method added instead of modifying existing
+    pub fn process_with_options(&self, data: &[u8], opts: Options) -> Result<Output> {
+        if opts.use_legacy {
+            self.process(data)
+        } else {
+            // New implementation
+            self.process_new(data, opts)
+        }
+    }
+}
+```
+Adds new functionality while preserving existing behavior
+</example>
+
+<example type="invalid">
+```rust
+// Bad: Modifying working code without clear need
+impl InputHandler {
+    pub fn handle_input(&self, data: Vec<u8>) -> Result<()> {
+        // Original working code modified without requirement
+        let processed = data.iter()
+            .map(|b| b.reverse_bits())  // Why was this added?
+            .collect::<Vec<_>>();
+        
+        self.process_data(&processed)
+    }
+}
+```
+Changes existing behavior without clear necessity
+</example>
+
+<example>
+```rust
+// Good: Clear documentation of necessary changes
+/// Updates user authentication to support new MFA requirements
+/// Change required by: SEC-123 - MFA Compliance Update
+impl Authenticator {
+    pub fn authenticate(&self, credentials: &Credentials) -> Result<Session> {
+        // First verify existing credentials
+        self.verify_credentials(credentials)?;
+        
+        // Then add new MFA check
+        if self.mfa_required(credentials.user_id) {
+            self.verify_mfa(credentials)?;
+        }
+        
+        self.create_session(credentials)
+    }
+}
+```
+Documents why changes were needed and maintains compatibility
+</example>
+
+<example type="invalid">
+```rust
+// Bad: Rewriting working code without necessity
+pub fn parse_config(data: &str) -> Config {
+    // Original simple working code:
+    // serde_json::from_str(data).unwrap()
+    
+    // Unnecessary complex rewrite:
+    let mut lines = data.lines();
+    let mut config = Config::default();
+    while let Some(line) = lines.next() {
+        // ... complex manual parsing ...
+    }
+    config
+}
+```
+Replaces simple working solution with unnecessary complexity
+</example> 

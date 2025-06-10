@@ -1,0 +1,123 @@
+---
+description: ENFORCE RISC0 guest program output standards WHEN implementing guest programs TO ensure consistent output formatting and proof generation
+globs: src/**/*.rs
+---
+
+# RISC0 Guest Program Output Standards
+
+## Context
+- When implementing RISC0 guest programs that generate formatted output
+- When handling proof generation in dev mode vs production
+- When working with structured and ASCII art output
+
+## Requirements
+
+### ASCII Art Output
+- All lines must be exactly 7 characters wide
+- No trailing spaces after lines
+- Use consistent line terminators
+- Example line formats:
+  ```
+  ---o---  // changing yang (7 chars)
+  --- ---  // unchanging yin (7 chars)
+  -------  // unchanging yang (7 chars)
+  ---x---  // changing yin (7 chars)
+  ```
+
+### Journal Output Structure
+- Use consistent marker bytes for different sections
+- Structure output in predictable order:
+  1. Input digest (32 bytes)
+  2. Structured output (with marker)
+  3. ASCII art representation
+- Log output sizes for verification
+
+### Proof Generation Mode
+- Handle dev mode proofs appropriately:
+  ```rust
+  if cfg!(feature = "dev") {
+      warn!("Running in development mode - proofs will not be secure");
+  }
+  ```
+- Expect different receipt types in dev vs production:
+  ```rust
+  match info.receipt.inner {
+      InnerReceipt::Composite(cr) => {
+          // Production mode handling
+      }
+      InnerReceipt::Dev(dr) => {
+          // Dev mode handling
+      }
+      _ => {
+          error!("Unexpected receipt type");
+          return Err(anyhow::anyhow!("Invalid receipt type"));
+      }
+  }
+  ```
+
+## Examples
+
+### Good Example - ASCII Art Generation
+```rust
+fn line_to_ascii(line: LineValue) -> String {
+    match line {
+        LineValue::OldYin => "---x---",    // exactly 7 chars
+        LineValue::YoungYin => "--- ---",   // exactly 7 chars
+        LineValue::OldYang => "---o---",    // exactly 7 chars
+        LineValue::YoungYang => "-------",  // exactly 7 chars
+    }.to_string()
+}
+
+fn hexagram_to_ascii(hexagram: &HexagramGeneration) -> String {
+    let mut ascii_art = String::new();
+    for (i, &line) in hexagram.lines.iter().enumerate().rev() {
+        ascii_art.push_str(&line_to_ascii(line));
+        if i > 0 {
+            ascii_art.push('\n');
+        }
+    }
+    ascii_art
+}
+```
+
+### Bad Example - ASCII Art Generation
+```rust
+// Don't do this - inconsistent line lengths and spacing
+fn line_to_ascii(line: LineValue) -> String {
+    match line {
+        LineValue::OldYin => "---x--- ",    // extra space
+        LineValue::YoungYin => "--- ---",
+        LineValue::OldYang => "---o",       // too short
+        LineValue::YoungYang => "-------  ", // extra spaces
+    }.to_string()
+}
+```
+
+### Good Example - Receipt Handling
+```rust
+match info.receipt.inner {
+    InnerReceipt::Composite(cr) => {
+        info!("Processing composite receipt in production mode");
+        let sr = prover.composite_to_succinct(&cr)?;
+        process_succinct_receipt(sr)
+    }
+    InnerReceipt::Dev(dr) => {
+        warn!("Processing dev mode receipt - not secure for production");
+        process_dev_receipt(dr)
+    }
+    _ => {
+        error!("Unexpected receipt type");
+        Err(anyhow::anyhow!("Invalid receipt type"))
+    }
+}
+```
+
+### Bad Example - Receipt Handling
+```rust
+// Don't do this - doesn't handle different receipt types
+if let InnerReceipt::Composite(cr) = info.receipt.inner {
+    prover.composite_to_succinct(&cr)?
+} else {
+    return Err(anyhow::anyhow!("Expected composite receipt"));
+}
+``` 

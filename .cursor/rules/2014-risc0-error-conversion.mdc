@@ -1,0 +1,117 @@
+---
+description: ENFORCE RISC0 error conversion patterns WHEN handling Result and Option types TO ensure correct error handling
+globs: src/**/*.rs
+---
+
+# RISC0 Error Conversion Standards
+
+## Context
+- Applied when working with RISC0 Result and Option types
+- Focuses on proper error conversion between different error types
+- Ensures consistent error handling patterns
+- Critical for RISC0 v1.2.1 API usage
+
+## Requirements
+
+### Result and Option Handling
+- Use pattern matching for Option to Result conversion:
+  ```rust
+  // GOOD: Use pattern matching
+  match value.composite() {
+      Some(cr) => Ok(cr),
+      None => Err(anyhow::anyhow!("Expected composite receipt"))
+  }
+  
+  // BAD: Don't use ok_or/ok_or_else with anyhow::Result
+  value.composite().ok_or(anyhow::anyhow!("..."))  // Won't compile
+  ```
+
+### Error Type Conversion
+- Convert RISC0 errors to anyhow errors using proper patterns:
+  ```rust
+  // GOOD: Use ? with From implementations
+  prover.prove_session(&ctx, &session)?;
+  
+  // GOOD: Use explicit conversion with into()
+  Err(Risc0RunnerError::ProofGenerationError.into())
+  ```
+
+### Error Context
+- Add context to errors when converting:
+  ```rust
+  // GOOD: Add context during conversion
+  match receipt.inner.composite() {
+      Some(cr) => Ok(cr),
+      None => {
+          error!("Expected composite receipt in prove_session");
+          Err(anyhow::anyhow!("Invalid receipt type"))
+      }
+  }
+  ```
+
+## Examples
+
+<example>
+// Good: Complete error handling with pattern matching
+fn process_receipt(receipt: &Receipt) -> Result<Vec<u8>> {
+    match receipt.inner.composite() {
+        Some(cr) => {
+            let sr = prover.composite_to_succinct(cr)?;
+            Ok(sr.get_seal_bytes().to_vec())
+        }
+        None => {
+            error!("Expected composite receipt");
+            Err(anyhow::anyhow!("Invalid receipt type"))
+        }
+    }
+}
+</example>
+
+<example>
+// Good: Error conversion with context
+fn verify_receipt(receipt: Receipt) -> Result<()> {
+    match receipt.claim() {
+        Ok(claim) => {
+            match claim {
+                MaybePruned::Value(rc) => Ok(()),
+                MaybePruned::Pruned(_) => {
+                    error!("Unexpected pruned claim");
+                    Err(anyhow::anyhow!("Cannot verify pruned claim"))
+                }
+            }
+        }
+        Err(e) => {
+            error!("Failed to get claim: {}", e);
+            Err(e.into())
+        }
+    }
+}
+</example>
+
+<example type="invalid">
+// Bad: Using ok_or with anyhow::Result
+fn process_unsafe(receipt: &Receipt) -> Result<Vec<u8>> {
+    receipt.inner.composite()
+        .ok_or(anyhow::anyhow!("Expected composite"))? // Won't compile
+        .get_seal_bytes()
+        .to_vec()
+}
+</example>
+
+<example type="invalid">
+// Bad: Missing error context
+fn verify_unsafe(receipt: Receipt) -> Result<()> {
+    receipt.claim()?.as_value()?; // Missing context
+    Ok(())
+}
+</example>
+
+## Critical Notes
+<critical>
+- NEVER use ok_or/ok_or_else with anyhow::Result
+- ALWAYS use pattern matching for Option to Result conversion
+- Add appropriate error context during conversion
+- Use proper error type conversion methods
+- Include logging for error cases
+- Maintain consistent error handling patterns
+</critical> 

@@ -1,0 +1,240 @@
+---
+description: ENFORCE Rust ownership patterns WHEN moving fields out of structs TO maintain valid state
+globs: src/**/*.rs
+---
+
+# Rust Ownership Patterns
+
+## Context
+- Applied when working with struct fields that need to be moved out
+- Focuses on maintaining valid struct state after moving fields
+- Ensures proper ownership handling in Rust code
+- Particularly important for complex data structures like RISC0 receipts
+- Critical for handling proofs and receipts where partial moves are common
+- Handles nested MaybePruned types in RISC0 v1.2.1 receipt claims
+
+## Requirements
+- Use `std::mem::take` when moving fields out of a struct that needs to remain valid
+- Mark struct bindings as mutable when using `std::mem::take`
+- Ensure field types have a valid default state for `take` to use
+- Consider implementing `Default` trait for custom types that will be taken
+- Use pattern matching with mutable bindings when needed
+- Document ownership transfer in comments for complex cases
+
+### RISC0 Receipt and Journal Handling
+- When returning a tuple containing both Receipt and Journal:
+  1. Clone the journal before using it in return values
+  2. Store cloned journal in a local variable to avoid multiple clones
+  3. Use the cloned journal in the return tuple
+  4. Keep the original receipt intact for further use
+- Example pattern:
+```rust
+// Good: Clone journal before use in return value
+let journal = info.receipt.journal.clone();
+return Ok((journal, digest, info.receipt));
+
+// Bad: Using journal directly causes partial move
+return Ok((info.receipt.journal, digest, info.receipt)); // Error!
+```
+
+- For nested receipt handling:
+  1. Clone required fields before any moves
+  2. Create new receipts with cloned data
+  3. Maintain original receipt validity
+  4. Document cloning in comments
+- Example:
+```rust
+// Good: Clone all needed fields
+let journal = info.receipt.journal.clone();
+let final_receipt = Receipt {
+    inner: InnerReceipt::Succinct(ident_receipt),
+    journal: info.receipt.journal.clone(),
+    metadata: info.receipt.metadata.clone(),
+};
+return Ok((journal, digest, final_receipt));
+```
+
+## Examples
+
+<example>
+// Good: Complete receipt handling with MaybePruned types
+fn process_receipt(mut receipt: Receipt) -> Result<(Journal, ProofDigest, Receipt)> {
+    // 1. First validate and convert receipt type
+    let succinct_receipt = match &receipt.inner {
+        InnerReceipt::Composite(cr) => {
+            emit_event!(MetricEvents::ProofConversion,
+                from => "composite",
+                to => "succinct"
+            );
+            let sr = prover.composite_to_succinct(cr)?;
+            receipt.inner = InnerReceipt::Succinct(sr.clone());
+            sr
+        }
+        InnerReceipt::Succinct(sr) => sr.clone(),
+        _ => {
+            emit_event!(MetricEvents::ProvingFailed,
+                error => "unexpected_receipt_type"
+            );
+            return Err(Error::UnexpectedType);
+        }
+    };
+
+    // 2. Validate journal structure
+    let journal_bytes = &receipt.journal.bytes;
+    if journal_bytes.len() < 32 {
+        emit_event!(MetricEvents::ProvingFailed,
+            error => "invalid_journal_size"
+        );
+        return Err(Error::InvalidJournal);
+    }
+
+    // 3. Get digest using reference (no ownership transfer)
+    let digest = match &succinct_receipt.claim {
+        MaybePruned::Value(rc) => {
+            match &rc.output {
+                MaybePruned::Value(Some(op)) => {
+                    match &op.assumptions {
+                        MaybePruned::Value(ass) => ass.digest(),
+                        _ => {
+                            emit_event!(MetricEvents::ProvingFailed,
+                                error => "pruned_assumptions"
+                            );
+                            return Err(Error::PrunedData);
+                        }
+                    }
+                }
+                _ => {
+                    emit_event!(MetricEvents::ProvingFailed,
+                        error => "invalid_output"
+                    );
+                    return Err(Error::InvalidOutput);
+                }
+            }
+        }
+        _ => {
+            emit_event!(MetricEvents::ProvingFailed,
+                error => "pruned_claim"
+            );
+            return Err(Error::PrunedClaim);
+        }
+    };
+
+    // 4. Finally take ownership of journal
+    let journal = std::mem::take(&mut receipt.journal);
+
+    Ok((journal, digest, receipt))
+}
+</example>
+
+<example>
+// Good: Pattern matching with MaybePruned validation
+fn extract_digest(sr: &SuccinctReceipt<ReceiptClaim>) -> Result<ProofDigest> {
+    match &sr.claim {
+        MaybePruned::Value(rc) => {
+            // Handle receipt claim
+            match &rc.output {
+                MaybePruned::Value(Some(op)) => {
+                    // Handle output
+                    match &op.assumptions {
+                        MaybePruned::Value(ass) => Ok(ass.digest()),
+                        MaybePruned::Pruned(_) => {
+                            emit_event!(MetricEvents::ProvingFailed,
+                                error => "pruned_assumptions"
+                            );
+                            Err(Error::PrunedData)
+                        }
+                    }
+                }
+                MaybePruned::Value(None) => {
+                    emit_event!(MetricEvents::ProvingFailed,
+                        error => "missing_output"
+                    );
+                    Err(Error::MissingOutput)
+                }
+                MaybePruned::Pruned(_) => {
+                    emit_event!(MetricEvents::ProvingFailed,
+                        error => "pruned_output"
+                    );
+                    Err(Error::PrunedOutput)
+                }
+            }
+        }
+        MaybePruned::Pruned(_) => {
+            emit_event!(MetricEvents::ProvingFailed,
+                error => "pruned_claim"
+            );
+            Err(Error::PrunedClaim)
+        }
+    }
+}
+</example>
+
+<example type="invalid">
+// Bad: Moving field before validating MaybePruned structure
+fn process_receipt_wrong(mut receipt: Receipt) -> Result<()> {
+    let journal = std::mem::take(&mut receipt.journal); // Wrong: validate first!
+
+    match &receipt.inner {
+        InnerReceipt::Succinct(sr) => {
+            match &sr.claim {
+                MaybePruned::Value(rc) => {
+                    // Process...
+                }
+                _ => return Err(Error::PrunedClaim),
+            }
+        }
+        _ => return Err(Error::UnexpectedType),
+    }
+}
+</example>
+
+<example type="invalid">
+// Bad: Missing proper MaybePruned handling
+fn extract_digest_wrong(sr: &SuccinctReceipt<ReceiptClaim>) -> Result<ProofDigest> {
+    let rc = sr.claim.as_value()?; // Wrong: missing proper pattern matching
+    let output = rc.output.as_value()?.ok_or(Error::MissingOutput)?;
+    let assumptions = output.assumptions.as_value()?;
+    Ok(assumptions.digest())
+}
+</example>
+
+## Critical Notes
+<critical>
+- ALWAYS validate type variants before any ownership transfer
+- ALWAYS mark struct bindings as mutable when using std::mem::take
+- NEVER move fields directly unless struct can be partially moved
+- Ensure field types implement Default or provide default value
+- Document ownership transfer for complex scenarios
+- Consider cloning instead if performance impact is acceptable
+- When extracting multiple values:
+  1. Validate types and structure first
+  2. Handle references/copies second
+  3. Move owned values last
+  4. Keep operations separate and clear
+  5. Document the sequence of operations
+- For RISC0 receipts:
+  1. Validate and convert receipt type first
+  2. Handle dev mode receipts appropriately
+  3. Validate journal structure before ownership transfer
+  4. Extract digests before taking journal ownership
+  5. Use std::mem::take for journal extraction
+  6. Maintain receipt validity throughout
+  7. Document ownership transfer sequence
+  8. Emit appropriate metrics for failures
+- For MaybePruned types:
+  1. Use pattern matching for each nested level
+  2. Check for pruned data before accessing values
+  3. Handle all error cases with proper context
+  4. Extract references before moving data
+  5. Follow receipt claim hierarchy
+  6. Emit metrics for pruned data
+  7. Use proper error types for each failure case
+  8. Document MaybePruned handling strategy
+- For complex ownership scenarios:
+  1. Order operations from least to most invasive
+  2. Use references for validation and inspection
+  3. Take ownership only after all preconditions are met
+  4. Keep struct valid for remaining operations
+  5. Document ownership transfer sequence
+  6. Handle error cases with appropriate metrics
+</critical> 

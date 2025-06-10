@@ -1,0 +1,121 @@
+---
+description: ENFORCE Solana CLI command patterns WHEN using solana commands TO ensure correct syntax and operation
+globs: **/*.{sh,bash}
+---
+
+# Solana CLI Command Patterns
+
+## Context
+- When using Solana CLI commands in scripts
+- When performing Solana account and transaction operations
+- When managing program deployments and upgrades
+- When managing keypairs and addresses
+
+## Requirements
+
+### Common Command Patterns
+1. Transfer SOL:
+```bash
+solana transfer <RECIPIENT_ADDRESS> <AMOUNT> --from <KEYPAIR_PATH>
+```
+
+2. Create Account:
+```bash
+solana create-account <KEYPAIR_PATH> <RECIPIENT_ADDRESS> <AMOUNT_SOL> <SIZE>
+```
+
+3. Check Account:
+```bash
+solana account <ADDRESS> [--output json]
+```
+
+4. Get Balance:
+```bash
+solana balance <ADDRESS>
+```
+
+5. Deploy Program:
+```bash
+solana program deploy <PROGRAM_FILEPATH> --program-id <KEYPAIR_PATH>
+```
+
+### Keypair Management Commands
+1. Generate new keypair:
+```bash
+solana-keygen new [--no-bip39-passphrase] [-o OUTPUT_FILE]
+```
+
+2. Get public key from keypair:
+```bash
+solana-keygen pubkey <KEYPAIR_PATH>
+```
+
+3. Recover keypair from seed phrase:
+```bash
+solana-keygen recover [-o OUTPUT_FILE]
+```
+
+4. Verify keypair:
+```bash
+solana-keygen verify <PUBKEY> <KEYPAIR_FILE>
+```
+
+5. Find vanity address:
+```bash
+solana-keygen grind --starts-with <PREFIX>
+```
+
+### Required Parameters
+- Always specify `--keypair` or `--from` when required
+- Use `--url` to specify network (devnet, testnet, mainnet-beta)
+- Include `--commitment` for critical operations
+- Specify `-o` or `--outfile` for keypair file output
+
+### Optional Parameters
+- `--allow-unfunded-recipient` for new account transfers
+- `--skip-seed-phrase-validation` for testing
+- `--output json` for machine parsing
+- `--verbose` for debugging
+- `--no-bip39-passphrase` for simpler keypair generation
+
+## Examples
+
+<example>
+# Good: Generate new keypair
+solana-keygen new --no-bip39-passphrase -o my-keypair.json
+
+# Good: Get public key
+solana-keygen pubkey my-keypair.json
+
+# Good: Correct transfer syntax
+solana transfer recipient_address 1.5 --from sender_keypair.json
+
+# Good: Create account with size
+solana create-account keypair.json recipient 1.5 82
+
+# Good: Get account info as JSON
+solana account address --output json
+</example>
+
+<example type="invalid">
+# Bad: Wrong parameter order
+solana transfer --from sender.json recipient 1.5
+
+# Bad: Missing required parameters
+solana create-account keypair.json
+
+# Bad: Invalid parameter names
+solana transfer --to recipient --amount 1.5
+
+# Bad: Missing output file for keypair
+solana-keygen new --no-bip39-passphrase
+</example>
+
+<critical>
+- ALWAYS verify keypair paths exist before using in commands
+- NEVER hardcode private keys or seed phrases
+- ALWAYS use --allow-unfunded-recipient when funding new accounts
+- Check command success with $? after execution
+- ALWAYS specify output file when generating new keypairs
+- NEVER store seed phrases in scripts or logs
+</critical> 

@@ -1,0 +1,160 @@
+# Logging and Error Diagnostics Standards
+
+## Context
+- When implementing logging in any part of the codebase
+- When handling errors in critical operations
+- When debugging complex operations
+- When adding new on-chain or off-chain components
+
+## Requirements
+
+### On-Chain Program Logging
+- Use ONLY `solana_program::msg!` for on-chain programs
+- Keep messages concise to minimize compute units
+- Log critical state changes and validations
+- Include relevant account keys and data sizes
+- Format for on-chain logs:
+  ```rust
+  solana_program::msg!("ComponentName: Action - Details");
+  ```
+
+### Off-Chain Code Logging
+- Use `tracing` crate for all off-chain code
+- Follow hierarchical logging levels:
+  - `error!` - Unrecoverable errors
+  - `warn!` - Recoverable issues needing attention
+  - `info!` - Important state changes
+  - `debug!` - Detailed development information
+  - `trace!` - Very detailed debugging
+- Include structured fields for machine parsing
+- Use spans for operation context
+
+### Error Diagnostics
+- Include contextual data in error messages
+- Log both error details and relevant state
+- Provide component-specific error information
+- Track error codes and their meanings
+- Include system state in error logs
+- Log relevant metrics with errors
+- Implement hierarchical error logging
+- Include operation metadata in error context
+- Preserve error chain information
+
+## Examples
+
+### On-Chain Good Examples
+<example>
+```rust
+// Good: Concise, informative on-chain logging
+solana_program::msg!("TokenSwap: Initializing pool - tokens={}", pool_token_count);
+solana_program::msg!("TokenSwap: Validating accounts - count={}", accounts.len());
+
+// Error case with relevant context
+if !account.is_signer {
+    solana_program::msg!("TokenSwap: Invalid signer - expected={}, actual={}", 
+        expected_key, account.key);
+    return Err(ProgramError::MissingRequiredSignature);
+}
+```
+</example>
+
+### Off-Chain Good Examples
+<example>
+```rust
+// Good: Structured off-chain logging with context
+use tracing::{error, info, warn, debug, trace, instrument};
+
+#[instrument(skip(config))]
+async fn process_transaction(tx: Transaction, config: &Config) {
+    info!(
+        tx_id = %tx.signature,
+        "Processing transaction"
+    );
+    
+    if let Err(e) = validate_transaction(&tx) {
+        error!(
+            error = %e,
+            tx_id = %tx.signature,
+            "Transaction validation failed"
+        );
+    }
+    
+    debug!(
+        tx_size = tx.data.len(),
+        accounts = ?tx.accounts,
+        "Transaction details"
+    );
+}
+
+// Good: Comprehensive error logging
+error!(
+    "Proof verification failed - Details:\n\
+     - Error: {:?}\n\
+     - Input count: {}\n\
+     - Total proof size: {} bytes\n\
+     - Component hashes:\n\
+       * proof_a: {}\n\
+       * proof_b: {}\n\
+     - First input preview: {}",
+    e,
+    input_count,
+    proof_size,
+    hex::encode(hash_a),
+    hex::encode(hash_b),
+    hex::encode(first_input)
+);
+```
+</example>
+
+### Invalid Examples
+<example type="invalid">
+```rust
+// Bad: Using tracing in on-chain code
+#[program]
+pub mod my_program {
+    use super::*;
+    
+    pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
+        info!("Initializing program");  // WRONG: Using tracing in on-chain code
+        Ok(())
+    }
+}
+
+// Bad: Using println! or eprintln!
+pub fn process_instruction() {
+    println!("Processing...");  // WRONG: Using println in any production code
+}
+
+// Bad: Using solana_program::msg! in off-chain code
+pub async fn process_block(block: Block) {
+    solana_program::msg!("Processing block");  // WRONG: Using msg! off-chain
+}
+
+// Bad: Insufficient error context
+error!("Verification failed: {:?}", e);  // Lacks context and state information
+```
+</example>
+
+## Critical Notes
+<critical>
+- NEVER use tracing or log crates in on-chain programs
+- NEVER use println!/eprintln! in production code
+- NEVER use solana_program::msg! in off-chain code
+- ALWAYS use appropriate log levels
+- ALWAYS include relevant context in log messages
+- ALWAYS consider compute units when logging on-chain
+- ALWAYS include full error context in error logs
+- ALWAYS preserve error chains when wrapping errors
+</critical>
+
+## Migration Notes
+1. For existing on-chain programs:
+   - Replace any tracing macros with solana_program::msg!
+   - Remove any log/tracing dependencies from Cargo.toml
+   - Verify compute unit consumption after adding logs
+
+2. For existing off-chain code:
+   - Replace println!/eprintln! with appropriate tracing macros
+   - Add structured fields to log messages
+   - Implement proper span hierarchy
+   - Enhance error logging with full context 

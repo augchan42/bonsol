@@ -24,10 +24,10 @@ elf/
 *.zip
 
 # Cursor IDE settings - track rules but ignore other IDE files
-.cursor/rules/*
+# .cursor/rules/*
 
 # Private individual user cursor rules
-.cursor/rules/_*.mdc
+# .cursor/rules/_*.mdc
 
 verification_key.json
 program-keypair.json

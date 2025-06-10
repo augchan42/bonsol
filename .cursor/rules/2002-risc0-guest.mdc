@@ -1,0 +1,245 @@
+---
+description: ENFORCE RISC0 guest program standards WHEN implementing guest programs TO ensure consistent output formatting and proof generation
+globs: src/**/guest/**/*.rs
+---
+
+# RISC0 Guest Program Standards
+
+<version>1.2.1</version>
+
+## Context
+- When implementing RISC0 guest programs that run inside the zkVM
+- When handling structured output in guest programs
+- When formatting proof outputs for verification
+- When managing guest program memory and resources
+- When implementing zero-knowledge computations
+
+## Requirements
+
+### Guest Program Structure
+```rust
+#![no_main]  // Required for guest programs
+#![no_std]   // Required unless specifically needing std
+
+use risc0_zkvm::guest::env;
+
+risc0_zkvm::guest::entry!(main);  // Required entry point macro
+
+fn main() {
+    // 1. Read inputs - Use appropriate type
+    let private_input: T = env::read();    // Private inputs
+    let public_input: U = env::read();     // Public inputs if needed
+    
+    // 2. Process inputs safely
+    let result = match compute(private_input, public_input) {
+        Ok(result) => result,
+        Err(e) => {
+            // Handle errors appropriately
+            commit_error(e);
+            return;
+        }
+    };
+    
+    // 3. Commit outputs in standard format
+    commit_structured_output(result);
+}
+
+// Always implement error handling
+fn commit_error(error: ComputeError) {
+    let mut error_output = vec![0xFF];  // Error marker
+    error_output.extend_from_slice(error.as_bytes());
+    env::commit_slice(&error_output);
+}
+```
+
+### Output Protocol
+1. Input Commitments:
+```rust
+// Always commit input hashes first
+env::commit_slice(&hash_inputs(&private_input));
+env::commit_slice(&hash_inputs(&public_input));
+```
+
+2. Structured Output Format:
+```rust
+// Standard marker bytes
+const MARKER_SUCCESS: u8 = 0xAA;
+const MARKER_ERROR: u8 = 0xFF;
+const MARKER_DEBUG: u8 = 0xBB;
+
+fn commit_structured_output<T: Serialize>(result: T) {
+    // 1. Marker byte
+    let mut output = vec![MARKER_SUCCESS];
+    
+    // 2. Serialized data
+    output.extend(bincode::serialize(&result).unwrap());
+    
+    // 3. Commit
+    env::commit_slice(&output);
+}
+```
+
+3. Debug/Human-Readable Output (Optional):
+```rust
+fn commit_debug_info(info: &str) {
+    let mut debug = vec![MARKER_DEBUG];
+    debug.extend_from_slice(info.as_bytes());
+    env::commit_slice(&debug);
+}
+```
+
+### Memory Management Guidelines
+```rust
+// 1. Use fixed buffers for known sizes
+let mut buffer = [0u8; 1024];  // Fixed size when possible
+
+// 2. Process large inputs in chunks
+fn process_large_input(input: &[u8]) {
+    for chunk in input.chunks(1024) {
+        process_chunk(chunk);
+        // Clear any temporary data
+        clear_sensitive_data();
+    }
+}
+
+// 3. Clear sensitive data
+fn clear_sensitive_data() {
+    // Zero out sensitive buffers
+    buffer.iter_mut().for_each(|b| *b = 0);
+}
+
+// 4. Avoid recursive algorithms
+// ❌ Bad: Recursive implementation
+fn recursive_process(data: &[u8]) {
+    if data.is_empty() { return; }
+    process_byte(data[0]);
+    recursive_process(&data[1..]);  // Stack usage grows
+}
+
+// ✅ Good: Iterative implementation
+fn iterative_process(data: &[u8]) {
+    for &byte in data {
+        process_byte(byte);
+    }
+}
+```
+
+### Error Handling
+```rust
+// 1. Define custom error types
+#[derive(Debug)]
+enum GuestError {
+    InvalidInput,
+    ComputationError,
+    MemoryLimit,
+}
+
+// 2. Implement error handling
+fn handle_computation() -> Result<(), GuestError> {
+    let input: Vec<u8> = env::read();
+    
+    if input.len() > MAX_INPUT_SIZE {
+        commit_error(GuestError::MemoryLimit);
+        return Err(GuestError::MemoryLimit);
+    }
+    
+    // Process and handle errors
+    match compute_result(input) {
+        Ok(result) => {
+            commit_structured_output(result);
+            Ok(())
+        }
+        Err(e) => {
+            commit_error(e);
+            Err(e)
+        }
+    }
+}
+```
+
+## Examples
+
+<example>
+```rust
+// Good: Complete guest program with proper structure
+#![no_main]
+#![no_std]
+
+use risc0_zkvm::guest::env;
+use serde::{Serialize, Deserialize};
+
+#[derive(Serialize, Deserialize)]
+struct ComputationResult {
+    hash: [u8; 32],
+    result: Vec<u8>,
+}
+
+risc0_zkvm::guest::entry!(main);
+
+fn main() {
+    // 1. Read and validate input
+    let input: Vec<u8> = env::read();
+    if !validate_input(&input) {
+        commit_error(GuestError::InvalidInput);
+        return;
+    }
+
+    // 2. Compute result
+    let result = match compute(&input) {
+        Ok(r) => r,
+        Err(e) => {
+            commit_error(e);
+            return;
+        }
+    };
+
+    // 3. Commit outputs in order
+    // a. Input hash
+    env::commit_slice(&hash_inputs(&input));
+    
+    // b. Structured result
+    let mut output = vec![MARKER_SUCCESS];
+    output.extend(bincode::serialize(&result).unwrap());
+    env::commit_slice(&output);
+    
+    // c. Optional debug info
+    if cfg!(debug_assertions) {
+        commit_debug_info(&format!("Processed {} bytes", input.len()));
+    }
+}
+```
+</example>
+
+<example type="invalid">
+```rust
+// Bad: Incorrect guest program structure
+#![no_main]
+
+use std::vec::Vec;  // ❌ Wrong: Using std
+use risc0_zkvm::guest::env;
+
+fn main() {  // ❌ Wrong: Missing entry macro
+    // ❌ Wrong: Unstructured output
+    env::commit_slice(b"result");  // No marker byte
+    
+    // ❌ Wrong: Recursive processing
+    recursive_process(&input);
+    
+    // ❌ Wrong: No error handling
+    let result = unsafe_compute();  // No error handling
+}
+```
+</example>
+
+<critical>
+- ALWAYS use #![no_main] and #![no_std]
+- ALWAYS use risc0_zkvm::guest::entry!(main)
+- ALWAYS commit input hashes first
+- ALWAYS use marker bytes for structured output
+- ALWAYS implement proper error handling
+- NEVER use recursive algorithms
+- NEVER commit unstructured output
+- NEVER exceed memory limits
+- ALWAYS clear sensitive data after use
+- ALWAYS validate input sizes before processing
+</critical> 

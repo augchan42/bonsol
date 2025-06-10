@@ -1,0 +1,51 @@
+---
+description: ENFORCE staged operation standards WHEN implementing complex operations TO ensure traceable execution flow
+globs: src/**/*.{rs,ts}
+---
+
+# Staged Operations Standards
+
+## Context
+- When implementing complex multi-step operations
+- When handling cryptographic or verification processes
+- When operations require detailed progress tracking
+
+## Requirements
+- Break complex operations into numbered stages
+- Log entry and exit of each stage
+- Include stage-specific validation checks
+- Track progress through stages
+- Log stage-specific metrics and data
+- Implement clear stage transitions
+- Include stage-specific error handling
+- Maintain stage context between steps
+- Log stage completion status
+
+## Examples
+<example>
+```rust
+msg!("Step 1: Starting proof verification process");
+// Stage 1 processing
+msg!("Step 1a: Input validation complete");
+
+msg!("Step 2: Deserializing proof components");
+if let Ok(components) = deserialize_components() {
+    msg!("Step 2a: Successfully deserialized components");
+} else {
+    msg!("Step 2 FAILED: Deserialization error");
+    return Err(Error::DeserializationFailed);
+}
+```
+Clear stage progression with validation and error handling
+</example>
+
+<example type="invalid">
+```rust
+// Process everything in one go
+let result = process_proof(input);
+if result.is_err() {
+    return Err(Error::ProcessingFailed);
+}
+```
+Lacks clear stages and progress tracking
+</example> 

@@ -1,0 +1,125 @@
+---
+description: ENFORCE RISC0 v1.2.1 struct patterns WHEN creating or modifying structs TO ensure correct API usage
+globs: **/*.rs
+---
+
+# RISC0 v1.2.1 Struct Patterns
+
+## Context
+- When working with RISC0 v1.2.1 structs
+- When creating or modifying Receipt, ReceiptMetadata, SuccinctReceipt, or MerkleProof instances
+- When handling proof generation and verification
+
+## Requirements
+- Use public API types from crate root:
+  ```rust
+  use risc0_zkvm::{
+      Receipt,
+      ReceiptMetadata,
+      Digest,
+      InnerReceipt,
+      VerifierContext,
+  };
+  ```
+
+### Receipt Creation
+- Create receipts using public constructors:
+  - Use `Receipt::new()` for receipt creation
+  - Use `ReceiptMetadata { verifier_parameters }` for metadata
+  - Access fields directly (e.g., `receipt.journal`, `receipt.metadata`)
+
+### Receipt Handling
+- Handle receipt variants properly:
+  ```rust
+  match &receipt.inner {
+      InnerReceipt::Succinct(sr) => {
+          // Handle succinct receipt
+      }
+      InnerReceipt::Composite(cr) => {
+          // Convert to succinct using prover
+          let sr = prover.composite_to_succinct(cr)?;
+      }
+      _ => {
+          // Handle other variants
+      }
+  }
+  ```
+
+### Dev Mode Receipts
+- Handle dev mode receipts appropriately:
+  ```rust
+  if option_env!("RISC0_DEV_MODE").is_some() {
+      // Create mock receipt
+      Receipt::new(
+          InnerReceipt::Fake(mock_data),
+          journal_bytes
+      )
+  }
+  ```
+
+## Examples
+
+<example>
+// Good: Complete receipt handling
+use risc0_zkvm::{Receipt, InnerReceipt, Digest, ReceiptMetadata};
+
+fn process_receipt(receipt: &Receipt, prover: &impl ProverServer) -> Result<Vec<u8>> {
+    // Access metadata directly
+    let metadata = &receipt.metadata;
+    
+    // Handle receipt variants
+    match &receipt.inner {
+        InnerReceipt::Succinct(sr) => {
+            // Process succinct receipt
+            Ok(sr.get_seal_bytes().to_vec())
+        }
+        InnerReceipt::Composite(cr) => {
+            // Convert to succinct
+            let sr = prover.composite_to_succinct(cr)?;
+            Ok(sr.get_seal_bytes().to_vec())
+        }
+        _ => Err(anyhow::anyhow!("Unexpected receipt type"))
+    }
+}
+</example>
+
+<example>
+// Good: Dev mode receipt creation
+fn create_dev_receipt(claim: ReceiptClaim, journal: Vec<u8>) -> Receipt {
+    Receipt::new(
+        InnerReceipt::Fake(FakeReceipt {
+            claim: MaybePruned::Value(claim),
+        }),
+        journal
+    )
+}
+</example>
+
+<example type="invalid">
+// Bad: Using private types or methods
+use risc0_zkvm::host::receipt::ReceiptImpl;  // Wrong: private module
+
+fn create_receipt() -> Receipt {
+    ReceiptImpl::new()  // Wrong: using private type
+}
+</example>
+
+<example type="invalid">
+// Bad: Missing variant handling
+fn process_unsafe(receipt: Receipt) -> Vec<u8> {
+    match receipt.inner {
+        InnerReceipt::Succinct(sr) => sr.get_seal_bytes(),
+        // Wrong: missing variants
+    }
+}
+</example>
+
+## Critical Notes
+<critical>
+- ALWAYS use public API types from crate root
+- NEVER use private modules or types
+- Handle ALL receipt variants
+- Use proper error handling
+- Follow dev mode patterns when needed
+- Maintain proper ownership and borrowing
+</critical> 

@@ -1,0 +1,90 @@
+---
+description: ENFORCE TypeScript schema standards WHEN working with schema files TO maintain type safety and consistency
+globs: src/**/*.{ts,tsx}
+---
+
+# Type System Standards
+
+## Context
+- When defining or modifying types/interfaces
+- When working with generic types
+- When handling API responses
+- When integrating with external systems
+
+## Requirements
+
+### Type Definition
+- Define explicit types for all variables and functions
+- Use strict type checking (`strict: true` in tsconfig)
+- Avoid `any` type unless absolutely necessary
+- Document type constraints and assumptions
+- Use discriminated unions for variant types
+
+### Generic Types
+- Define clear constraints on type parameters
+- Document type parameter requirements
+- Maintain consistent generic parameter naming
+- Verify generic type usage across boundaries
+- Test with multiple type arguments
+
+### API Integration
+- Define complete types for API requests/responses
+- Use zod/io-ts for runtime type validation
+- Handle partial/undefined data explicitly
+- Version types alongside API versions
+- Document breaking type changes
+
+### Type Safety
+- Use type guards for runtime checks
+- Maintain type safety across async boundaries
+- Handle nullable values explicitly
+- Use branded types for type-level validation
+- Implement proper error types
+
+## Examples
+
+### Good Example - Generic Type Safety
+```typescript
+// Clear type parameter constraints
+interface DataProcessor<T extends Record<string, unknown>> {
+  process(data: T): Promise<ProcessResult<T>>;
+  validate(data: T): T extends Validatable ? boolean : never;
+}
+
+// Runtime type checking
+const processData = <T extends ApiPayload>(data: T): ProcessResult<T> => {
+  // Validate at runtime
+  if (!isValidPayload(data)) {
+    throw new TypeError('Invalid payload');
+  }
+  return process(data);
+};
+```
+
+### Bad Example - Unsafe Type Usage
+```typescript
+// Don't use any or ignore nullability
+const processData = (data: any) => {
+  // Unsafe access, no type checking
+  return {
+    id: data.id,
+    value: data.values[0],
+  };
+};
+```
+
+### Good Example - API Types
+```typescript
+// Version-aware type definitions
+interface ApiResponse<T> {
+  version: string;
+  data: T;
+  metadata: ResponseMetadata;
+}
+
+// Runtime validation
+const validateResponse = <T>(response: unknown): ApiResponse<T> => {
+  const schema = responseSchema<T>();
+  return schema.parse(response);
+};
+``` 

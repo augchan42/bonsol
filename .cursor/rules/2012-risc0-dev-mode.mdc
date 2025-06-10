@@ -1,0 +1,128 @@
+---
+description: ENFORCE RISC0 dev mode standards WHEN running with RISC0_DEV_MODE TO ensure correct test environment behavior
+globs: src/**/*.rs
+---
+
+# RISC0 Development Mode Standards
+
+## Context
+- Applied when working with RISC0 v1.2.1 in development mode
+- Focuses on handling dev mode receipts and proofs
+- Ensures consistent behavior between dev and production modes
+- See 2001-risc0-api for high-level RISC0 integration guidelines
+- See 2003-risc0-receipts for general receipt handling
+
+## Requirements
+- Handle dev mode receipt variants:
+  - Check for `InnerReceipt::Fake` variant in dev mode
+  - Access journal data normally
+  - Handle claims without cryptographic verification
+  - Expect minimal or empty seal data
+  - Log appropriate dev mode warnings
+- Follow dev mode patterns:
+  - No actual proof generation
+  - Journal data works normally
+  - Claims exist but aren't verified
+  - Seal operations are mocked
+  - Zero-knowledge properties not enforced
+- Implement proper dev mode detection:
+  - Use `cfg!(feature = "dev-mode")` for compile-time checks
+  - Log clear warnings about dev mode usage
+  - Never use dev mode receipts in production
+  - Handle both dev and production paths
+- Emit appropriate metrics:
+  - Log dev mode status
+  - Track mock proof operations
+  - Record journal sizes
+  - Note absence of real proofs
+
+## Examples
+
+<example>
+// Good: Complete dev mode receipt handling
+fn handle_receipt(receipt: &Receipt) -> Result<()> {
+    match &receipt.inner {
+        InnerReceipt::Fake(_) => {
+            debug!("Dev mode receipt detected");
+            // Handle journal normally
+            let journal = &receipt.journal;
+            
+            // Claims work but aren't verified
+            if let Ok(claim) = receipt.claim() {
+                debug!("Dev mode claim digest: {:?}", claim.digest());
+            }
+            
+            emit_event!(MetricEvents::ProofGeneration,
+                mode => "dev",
+                journal_size => journal.bytes.len()
+            );
+        }
+        InnerReceipt::Composite(_) | InnerReceipt::Succinct(_) => {
+            debug!("Production mode receipt");
+            // Normal proof handling
+        }
+        _ => {
+            error!("Unexpected receipt type");
+            return Err(anyhow::anyhow!("Invalid receipt type"));
+        }
+    }
+    Ok(())
+}
+</example>
+
+<example>
+// Good: Dev mode metrics
+fn emit_dev_metrics(receipt: &Receipt) {
+    match &receipt.inner {
+        InnerReceipt::Fake(_) => {
+            emit_event!(MetricEvents::ProofGeneration,
+                mode => "dev",
+                warning => "no_cryptographic_verification"
+            );
+            
+            emit_histogram!(MetricEvents::JournalSize,
+                receipt.journal.bytes.len() as f64,
+                mode => "dev"
+            );
+        }
+        _ => {
+            emit_event!(MetricEvents::ProofGeneration,
+                mode => "production"
+            );
+        }
+    }
+}
+</example>
+
+<example type="invalid">
+// Bad: Missing dev mode handling
+fn process_receipt(receipt: &Receipt) {
+    match &receipt.inner {
+        InnerReceipt::Composite(_) | InnerReceipt::Succinct(_) => {
+            // Only handles production receipts
+        }
+        _ => panic!("Unknown receipt type"), // Wrong: should handle Fake
+    }
+}
+</example>
+
+<example type="invalid">
+// Bad: Using dev mode receipts in production
+fn verify_proof(receipt: &Receipt) -> bool {
+    match &receipt.inner {
+        InnerReceipt::Fake(_) => true, // NEVER accept fake receipts in production
+        _ => verify_real_proof(receipt),
+    }
+}
+</example>
+
+## Critical Notes
+<critical>
+- NEVER use dev mode receipts in production
+- ALWAYS handle InnerReceipt::Fake variant
+- Log clear warnings about dev mode usage
+- Maintain consistent journal handling
+- Track dev mode in metrics
+- Document dev mode limitations
+- Handle both modes cleanly
+</critical> 

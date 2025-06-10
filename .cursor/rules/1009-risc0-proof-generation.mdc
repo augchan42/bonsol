@@ -1,0 +1,120 @@
+# RISC0 Proof Generation and Verification Standards
+
+## Context
+- When implementing or modifying RISC0 proof generation code
+- When handling proof compression and verification
+- When managing proof lifecycle from generation to submission
+
+## Requirements
+
+### Proof Generation
+- Log detailed metrics at each stage of proof generation:
+  - Memory image details (ID, size, pages)
+  - Input configuration and sizes
+  - Execution environment setup
+  - Session execution status
+  - Prover initialization
+  - Proof statistics (segments, cycles)
+
+### Error Handling
+- Implement comprehensive error handling with context:
+  - Session execution failures
+  - Prover initialization errors
+  - Proof generation failures
+  - Receipt conversion errors
+  - Identity proof failures
+  - Compression failures
+
+### Proof Compression
+- Validate architecture requirements before compression
+- Log compression process details:
+  - Tool paths and existence
+  - Input/output file details
+  - Execution status of external tools
+  - Final proof size and format
+
+### Proof Verification
+- Track and log proof metadata:
+  - Exit codes (system and user)
+  - Component sizes
+  - Execution digests
+  - Receipt structure
+
+### Metrics and Monitoring
+- Emit histograms for key metrics:
+  - Proof segments
+  - Total cycles
+  - User cycles
+  - Image compute estimates
+  - Download sizes
+
+## Examples
+
+### Good Example - Proof Generation
+```rust
+info!(
+    "Starting proof generation:\n\
+     - Image ID: {}\n\
+     - Memory image size: {} pages\n\
+     - Number of inputs: {}", 
+    image_id,
+    memory_image.pages.len(),
+    sorted_inputs.len()
+);
+
+let info = match prover.prove_session(&ctx, &session) {
+    Ok(info) => {
+        info!("Proof generation successful");
+        info!(
+            "Proof stats:\n\
+             - Segments: {}\n\
+             - Total cycles: {}\n\
+             - User cycles: {}", 
+            info.stats.segments,
+            info.stats.total_cycles,
+            info.stats.user_cycles
+        );
+        info
+    }
+    Err(e) => {
+        error!("Proof generation failed: {}", e);
+        return Err(anyhow::anyhow!("Proof generation failed: {}", e));
+    }
+};
+```
+
+### Bad Example - Insufficient Logging
+```rust
+// Don't do this - lacks proper logging and error context
+let info = prover.prove_session(&ctx, &session)?;
+let receipt = info.receipt;
+return Ok(receipt);
+```
+
+### Good Example - Error Handling with Context
+```rust
+if let InnerReceipt::Composite(cr) = &info.receipt.inner {
+    info!("Converting composite receipt to succinct receipt");
+    let sr = match prover.composite_to_succinct(&cr) {
+        Ok(sr) => {
+            info!("Succinct receipt conversion successful");
+            sr
+        }
+        Err(e) => {
+            error!("Failed to convert to succinct receipt: {}", e);
+            return Err(anyhow::anyhow!("Failed to convert to succinct receipt: {}", e));
+        }
+    };
+} else {
+    error!("Expected composite receipt");
+    return Err(Risc0RunnerError::ProofGenerationError.into());
+}
+```
+
+### Bad Example - Poor Error Handling
+```rust
+// Don't do this - lacks error context and logging
+let sr = prover.composite_to_succinct(&cr)?;
+let receipt = identity_p254(&sr)?;
+return Ok(receipt);
+``` 

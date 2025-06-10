@@ -1,0 +1,265 @@
+---
+description: ENFORCE Bonsol input resolver standards WHEN handling program inputs TO ensure secure and efficient input processing
+globs: src/**/*.rs
+---
+
+# Bonsol Input Resolver Standards
+
+## Context
+- Applied when implementing input resolution for RISC0 programs
+- Focuses on secure handling of public and private inputs
+- Ensures proper parallel processing and resource limits
+- Critical for program execution security
+- Integrates with Solana RPC and HTTP clients
+
+## Requirements
+
+### Input Type Handling
+- Use proper input enum variants:
+  ```rust
+  pub enum ProgramInput {
+      Empty,
+      Resolved(ResolvedInput),
+      Unresolved(UnresolvedInput),
+  }
+  ```
+- Implement support checking:
+  ```rust
+  fn supports(&self, input_type: InputType) -> bool {
+      match input_type {
+          InputType::PublicUrl => true,
+          InputType::PublicData => true,
+          InputType::PublicAccountData => true,
+          InputType::Private => true,
+          InputType::PublicProof => true,
+          _ => false,
+      }
+  }
+  ```
+
+### Input Resolution
+- Implement parallel processing for public inputs:
+  ```rust
+  async fn resolve_public_inputs(
+      &self,
+      inputs: Vec<InputT>
+  ) -> Result<Vec<ProgramInput>> {
+      let mut url_set = JoinSet::new();
+      let mut res = vec![ProgramInput::Empty; inputs.len()];
+      
+      // Process in parallel
+      for (index, input) in inputs.into_iter().enumerate() {
+          let client = self.http_client.clone();
+          res[index] = self.par_resolve_input(
+              client,
+              index as u8,
+              input,
+              &mut url_set
+          )?;
+      }
+      
+      // Wait for completion
+      while let Some(result) = url_set.join_next().await {
+          match result {
+              Ok(Ok(ri)) => {
+                  res[ri.index as usize] = ProgramInput::Resolved(ri);
+              }
+              Err(e) => return Err(e.into()),
+          }
+      }
+      Ok(res)
+  }
+  ```
+
+### Private Input Security
+- Implement signed requests for private inputs:
+  ```rust
+  let pir = PrivateInputRequest {
+      identity: signer.pubkey(),
+      claim_id: execution_id.to_string(),
+      input_index: index,
+      now_utc: SystemTime::now()
+          .duration_since(UNIX_EPOCH)?
+          .as_secs(),
+  };
+  let signature = signer.sign_message(&pir.to_bytes());
+  ```
+
+### Resource Management
+- Enforce size and timeout limits:
+  ```rust
+  pub struct DefaultInputResolver {
+      http_client: Arc<reqwest::Client>,
+      solana_rpc_client: Arc<RpcClient>,
+      max_input_size_mb: u32,
+      timeout: Duration,
+  }
+  ```
+- Track download progress and enforce limits
+- Handle timeouts gracefully
+- Clean up resources on error
+
+## Examples
+
+<example>
+// Good: Complete input resolver implementation
+pub struct CustomInputResolver {
+    http_client: Arc<reqwest::Client>,
+    max_size: usize,
+    timeout: Duration,
+}
+
+#[async_trait]
+impl InputResolver for CustomInputResolver {
+    async fn resolve_public_inputs(
+        &self,
+        inputs: Vec<InputT>
+    ) -> Result<Vec<ProgramInput>> {
+        let mut url_set = JoinSet::new();
+        let mut results = vec![ProgramInput::Empty; inputs.len()];
+        
+        // Process inputs in parallel
+        for (idx, input) in inputs.into_iter().enumerate() {
+            let client = self.http_client.clone();
+            let max_size = self.max_size;
+            let timeout = self.timeout;
+            
+            url_set.spawn(async move {
+                match input.url {
+                    Some(url) => {
+                        download_with_limits(
+                            client,
+                            idx as u8,
+                            url,
+                            max_size,
+                            timeout
+                        ).await
+                    }
+                    None => Ok(ResolvedInput::empty(idx as u8)),
+                }
+            });
+        }
+        
+        // Collect results with proper error handling
+        while let Some(result) = url_set.join_next().await {
+            match result {
+                Ok(Ok(input)) => {
+                    results[input.index as usize] = 
+                        ProgramInput::Resolved(input);
+                }
+                Ok(Err(e)) => {
+                    url_set.abort_all();
+                    return Err(e);
+                }
+                Err(e) => {
+                    url_set.abort_all();
+                    return Err(e.into());
+                }
+            }
+        }
+        
+        Ok(results)
+    }
+}
+</example>
+
+<example>
+// Good: Resource-safe download implementation
+async fn download_with_limits(
+    client: Arc<reqwest::Client>,
+    index: u8,
+    url: Url,
+    max_size: usize,
+    timeout: Duration,
+) -> Result<ResolvedInput> {
+    let response = client
+        .get(url.clone())
+        .timeout(timeout)
+        .send()
+        .await?;
+        
+    if !response.status().is_success() {
+        return Err(anyhow::anyhow!(
+            "Failed to download input {}: {}",
+            index,
+            response.status()
+        ));
+    }
+    
+    let content_length = response
+        .content_length()
+        .unwrap_or(0);
+        
+    if content_length > max_size as u64 {
+        return Err(anyhow::anyhow!(
+            "Input {} too large: {} > {}",
+            index,
+            content_length,
+            max_size
+        ));
+    }
+    
+    let data = response
+        .bytes()
+        .await?
+        .to_vec();
+        
+    Ok(ResolvedInput {
+        index,
+        data,
+        input_type: ProgramInputType::PublicUrl,
+    })
+}
+</example>
+
+<example type="invalid">
+// Bad: Unsafe parallel processing
+async fn resolve_unsafe(inputs: Vec<InputT>) -> Result<Vec<ProgramInput>> {
+    let futures: Vec<_> = inputs
+        .into_iter()
+        .map(|input| async {
+            // No timeout
+            // No size limits
+            // No error handling
+            let response = reqwest::get(input.url).await?;
+            let data = response.bytes().await?;
+            Ok(ProgramInput::Resolved(ResolvedInput {
+                index: 0, // Wrong index
+                data: data.to_vec(),
+                input_type: ProgramInputType::PublicUrl,
+            }))
+        })
+        .collect();
+    
+    futures::future::join_all(futures).await // Can exhaust resources
+}
+</example>
+
+<example type="invalid">
+// Bad: Missing security for private inputs
+async fn resolve_private_unsafe(
+    input: UnresolvedInput,
+    signer: &dyn Signer
+) -> Result<ResolvedInput> {
+    let response = reqwest::get(input.url).await?; // No authentication
+    let data = response.bytes().await?;
+    
+    Ok(ResolvedInput {
+        index: input.index,
+        data: data.to_vec(),
+        input_type: ProgramInputType::Private, // Wrong! No verification
+    })
+}
+</example>
+
+## Critical Notes
+<critical>
+- ALWAYS enforce size limits and timeouts
+- NEVER process private inputs without proper signing
+- Use parallel processing safely with proper resource management
+- Handle all download errors appropriately
+- Clean up resources in error cases
+- Validate input types before processing
+- Maintain proper input ordering
+- Track and log input resolution metrics
+</critical> 

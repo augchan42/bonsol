@@ -1,0 +1,120 @@
+---
+description: ENFORCE RISC0 guest program standards WHEN implementing guest programs TO ensure consistent output formatting and proof generation
+globs: src/**/*.rs
+---
+
+# RISC0 Guest Program Standards
+
+## Context
+- Applied when implementing RISC0 v1.2.1 guest programs
+- Focuses on correct program structure and output formatting
+- Ensures consistent proof generation patterns
+- See 2001-risc0-api for high-level RISC0 integration guidelines
+- See 2002-risc0-types for import standards
+
+## Requirements
+- Follow guest program structure:
+  - Use `#![no_main]` and `#![no_std]` when not using std feature
+  - Use `risc0_zkvm::guest::entry!(main)` for entry point
+  - Import guest-specific types from `risc0_zkvm::guest`
+  - Use correct digest types from `risc0_zkvm::guest::sha`
+- Handle inputs and outputs correctly:
+  - Read private inputs using `env::read()`
+  - Commit outputs in structured format
+  - Use consistent markers for output sections
+  - Hash inputs for verification when needed
+- Follow output formatting standards:
+  - Use marker bytes to separate output sections
+  - Structure binary outputs for efficient verification
+  - Include human-readable outputs when helpful
+  - Maintain consistent byte ordering
+- Implement proper error handling:
+  - Use `Result` types for fallible operations
+  - Handle all error cases explicitly
+  - Provide meaningful error messages
+  - Avoid panics in production code
+
+## Examples
+
+<example>
+// Good: Basic guest program structure
+#![no_main]
+#![no_std]
+
+use risc0_zkvm::guest::{env, sha};
+
+risc0_zkvm::guest::entry!(main);
+
+fn main() {
+    // 1. Read private inputs
+    let input: Vec<u8> = env::read();
+    
+    // 2. Perform computation
+    let result = compute(&input);
+    
+    // 3. Commit outputs in structured format
+    // a. Hash of input for verification
+    let input_hash = sha::digest(&input);
+    env::commit(&input_hash);
+    
+    // b. Structured output with marker
+    let mut output = vec![0xAA]; // Marker byte
+    output.extend(result);
+    env::commit(&output);
+}
+</example>
+
+<example>
+// Good: Error handling in guest program
+use risc0_zkvm::guest::{env, sha};
+
+fn process_input(input: &[u8]) -> Result<Vec<u8>, &'static str> {
+    if input.is_empty() {
+        return Err("Input cannot be empty");
+    }
+    
+    let result = compute(input)?;
+    Ok(result)
+}
+
+fn main() {
+    let input: Vec<u8> = env::read();
+    match process_input(&input) {
+        Ok(result) => {
+            env::commit(&result);
+        }
+        Err(e) => {
+            // Commit error state for verification
+            env::commit(&[0xFF]); // Error marker
+            env::commit(e.as_bytes());
+        }
+    }
+}
+</example>
+
+<example type="invalid">
+// Bad: Incorrect program structure
+fn main() { // Missing #![no_main] and entry macro
+    let input = std::fs::read("input.txt").unwrap(); // Wrong: using std
+    println!("Result: {:?}", result); // Wrong: using println
+}
+</example>
+
+<example type="invalid">
+// Bad: Unsafe output handling
+fn main() {
+    let result = compute();
+    env::commit(&result); // Missing structure/markers
+    // No input verification
+    // No error handling
+}
+</example>
+
+## Critical Notes
+<critical>
+- ALWAYS use proper entry point macro
+- NEVER use std without explicit feature flag
+- Structure outputs consistently
+- Handle all error cases explicitly
+- Include input verification when needed
+</critical> 

@@ -1,0 +1,94 @@
+---
+description: ENFORCE incremental development practices WHEN making changes TO facilitate learning and maintainable code
+globs: **/*
+---
+
+# Incremental Learning and Development
+
+## Context
+- Applied when developing features or making changes while learning Rust
+- Focuses on breaking down complex tasks into manageable learning units
+- Ensures code changes are testable and reviewable
+- Promotes understanding through incremental progress
+
+## Requirements
+
+### Code Changes
+- Break large features into smaller, independent units
+- Each change should focus on a single concept or functionality
+- Changes should be small enough to be fully understood
+- Include tests for new functionality
+- Document learning outcomes in commit messages
+
+### Learning Process
+- Start with basic implementations before optimization
+- Add complexity gradually
+- Document new Rust concepts used in comments
+- Include examples for unfamiliar patterns
+- Write tests before implementing features
+
+### Change Size Guidelines
+- Aim for changes under 200 lines
+- If over 200 lines, break into smaller commits
+- Each commit should be independently testable
+- Maintain a clear progression of functionality
+
+### Documentation
+- Comment on new Rust concepts being used
+- Explain the reasoning behind patterns
+- Reference learning resources when applicable
+- Document any challenges encountered
+
+## Examples
+
+<example>
+// Good: Breaking down a complex feature
+// Step 1: Basic structure
+pub struct DataProcessor {
+    data: Vec<u32>,
+}
+
+impl DataProcessor {
+    pub fn new(data: Vec<u32>) -> Self {
+        Self { data }
+    }
+}
+
+// Step 2: Add core functionality (in next commit)
+// Step 3: Add optimization (in later commit)
+// Step 4: Add error handling (in final commit)
+</example>
+
+<example type="invalid">
+// Bad: Too much complexity at once
+pub struct DataProcessor<T> where T: AsRef<[u8]> + Send + Sync {
+    data: Vec<T>,
+    processors: HashMap<String, Box<dyn Fn(T) -> Result<T, Error>>>,
+    error_handlers: Vec<Box<dyn Fn(Error) -> Result<(), Error>>>,
+}
+</example>
+
+<example>
+// Good: Clear progression of learning
+// First commit: Basic trait implementation
+trait Calculator {
+    fn calculate(&self, value: u32) -> u32;
+}
+
+// Second commit: Add error handling
+trait Calculator {
+    fn calculate(&self, value: u32) -> Result<u32, CalculationError>;
+}
+
+// Third commit: Add async support
+trait Calculator {
+    async fn calculate(&self, value: u32) -> Result<u32, CalculationError>;
+}
+</example>
+
+<example type="invalid">
+// Bad: Too many concepts at once
+trait Calculator<T, E> where T: Send + Sync, E: Error {
+    async fn calculate<'a>(&'a self, value: T) -> Result<Box<dyn Future<Output = Result<T, E>> + 'a>, E>;
+}
+</example> 

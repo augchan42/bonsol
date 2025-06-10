@@ -1,0 +1,66 @@
+---
+description: ENFORCE zero-knowledge proof patterns WHEN implementing ZK proofs TO ensure security and correctness
+globs: prover/**/*.rs
+---
+
+# Zero-Knowledge Proof Patterns
+
+## Context
+- Applied when implementing zero-knowledge proofs using RISC0
+- Ensures security and correctness of ZK proof generation and verification
+- Maintains compatibility with Solana integration
+
+## Requirements
+- Use RISC0 zkVM 1.2.1 with appropriate features
+- Follow RISC0 guest/host separation pattern
+- Implement proper error handling for proof generation
+- Use appropriate RISC0 components:
+  - risc0-zkvm for core ZK functionality
+  - risc0-groth16 for Groth16 proof system
+  - risc0-circuit-recursion for recursive proofs
+- Properly handle memory constraints in guest code
+- Implement proper serialization for proof inputs/outputs
+- Use appropriate cryptographic primitives
+- Document proof generation and verification steps
+
+## Examples
+
+<example>
+// Good: Proper guest/host separation
+// In host code
+use risc0_zkvm::Prover;
+
+pub async fn generate_proof(input: &[u8]) -> Result<ProofOutput> {
+    let mut prover = Prover::new(&METHODS, METHOD_NAME)?;
+    prover.add_input_u8_slice(input);
+    let receipt = prover.run()?;
+    Ok(ProofOutput::new(receipt))
+}
+</example>
+
+<example type="invalid">
+// Bad: Mixing guest/host concerns
+fn generate_proof(input: &[u8]) {
+    // Directly manipulating proof state in same context
+    let state = prove_computation(input);
+    verify_state(state);
+}
+</example>
+
+<example>
+// Good: Proper memory handling in guest
+pub fn guest_entry() -> Result<()> {
+    let input: Vec<u8> = env::read();
+    let result = process_in_chunks(&input)?;
+    env::commit(&result);
+    Ok(())
+}
+</example>
+
+<example type="invalid">
+// Bad: Inefficient memory usage in guest
+pub fn guest_entry() {
+    let huge_vec = vec![0u8; 1_000_000];  // May exceed memory limits
+    process_all_at_once(&huge_vec);
+}
+</example> 

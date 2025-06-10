@@ -1,0 +1,91 @@
+---
+description: ENFORCE Bonsol-specific RISC0 patterns WHEN implementing RISC0 functionality TO ensure compatibility with Bonsol's architecture
+globs: src/**/*.rs
+---
+
+# Bonsol RISC0 Integration Standards
+
+## Context
+- Applied when implementing RISC0 functionality specifically for Bonsol
+- May differ from standard RISC0 zkVM best practices
+- Ensures compatibility with Bonsol's architecture and requirements
+- Takes precedence over general RISC0 patterns when conflicts arise
+
+## Requirements
+
+### Receipt Type Handling
+- Return types should match function signatures exactly:
+  - If function expects `SuccinctReceipt`, extract from `Receipt.inner`
+  - If function expects `Receipt`, return `Receipt` directly
+  - Don't try to convert between types using `try_into()`
+- Handle dev mode receipts appropriately:
+  ```rust
+  // Create FakeReceipt first
+  let fake_receipt = FakeReceipt::new(mock_claim);
+  let receipt = Receipt::new(
+      InnerReceipt::Fake(fake_receipt),
+      journal.bytes.clone()
+  );
+  
+  // Then extract inner receipt if needed
+  if let InnerReceipt::Succinct(sr) = receipt.inner {
+      Ok(sr)
+  } else {
+      Err(anyhow::anyhow!("Expected succinct receipt"))
+  }
+  ```
+
+### Error Handling
+- Use explicit error types for Bonsol operations
+- Include appropriate context in error messages
+- Log errors with proper severity levels
+- Track error metrics for monitoring
+
+## Examples
+
+<example>
+// Good: Matching function return type requirements
+fn process_proof() -> Result<SuccinctReceipt<ReceiptClaim>> {
+    let receipt = create_receipt()?;
+    
+    // Extract inner receipt to match return type
+    if let InnerReceipt::Succinct(sr) = receipt.inner {
+        Ok(sr)
+    } else {
+        Err(anyhow::anyhow!("Expected succinct receipt"))
+    }
+}
+</example>
+
+<example>
+// Good: Dev mode receipt handling
+if option_env!("RISC0_DEV_MODE").is_some() {
+    let mock_claim = ReceiptClaim::ok(image_id, journal.bytes.clone());
+    let fake_receipt = FakeReceipt::new(mock_claim);
+    let receipt = Receipt::new(
+        InnerReceipt::Fake(fake_receipt),
+        journal.bytes.clone()
+    );
+    
+    // Extract succinct receipt if needed
+    if let InnerReceipt::Succinct(sr) = receipt.inner {
+        Ok(sr)
+    } else {
+        Err(anyhow::anyhow!("Expected succinct receipt"))
+    }
+}
+</example>
+
+<example type="invalid">
+// Bad: Using try_into() for receipt conversion
+let succinct_receipt: SuccinctReceipt<ReceiptClaim> = receipt.try_into()?;
+</example>
+
+## Critical Notes
+<critical>
+- ALWAYS match function return type requirements exactly
+- NEVER use try_into() for receipt conversions
+- Use pattern matching to extract inner receipts
+- Follow Bonsol error handling patterns
+- Maintain proper logging and metrics
+</critical> 

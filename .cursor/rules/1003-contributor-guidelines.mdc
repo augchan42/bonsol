@@ -1,0 +1,82 @@
+DESCRIPTION: ENFORCE contributor guidelines WHEN making changes or submitting code TO maintain consistent code quality and documentation standards
+
+WHEN:
+- Creating new pull requests
+- Making code changes
+- Writing commit messages
+- Adding new features or fixing bugs
+- Modifying documentation
+
+THEN:
+
+1. Pull Request Requirements:
+   - Reference existing GitHub issues
+   - Include clear descriptions
+   - Add relevant tests
+   - Run quality checks:
+     - `nix flake check`
+     - `cargo +nightly fmt` for Rust code
+     - `taplo fmt` for TOML files
+     - `cargo clippy` for lints
+   - Exercise caution with new dependencies
+
+2. Commit Message Format:
+   Must follow Conventional Commits specification:
+   ```
+   type(scope?): description
+
+   [body]?
+
+   [footer]?
+   ```
+
+   Types:
+   - feat: New features
+   - fix: Bug fixes
+   - docs: Documentation changes
+   - style: Code style changes (formatting, etc.)
+   - refactor: Code restructuring
+   - perf: Performance improvements
+   - test: Test-related changes
+   - build: Build system/dependency changes
+   - ci: CI configuration changes
+   - chore: Miscellaneous changes
+   - revert: Revert previous commits
+
+   Rules:
+   - Description must be imperative, present tense
+   - Breaking changes must start with "BREAKING CHANGE:"
+   - Reference issues with "Closes #123" format
+   - Scope is optional but should indicate affected area
+
+3. Code Quality Standards:
+   - All code must be properly formatted
+   - Tests must be included for new features
+   - Documentation must be updated
+   - Dependencies must be carefully vetted
+   - Breaking changes must be clearly documented
+
+EXAMPLES:
+
+Good commit messages:
+```
+feat(api): add user authentication
+fix(auth): correct token expiration logic
+docs: update README with new installation steps
+chore: update dependencies
+```
+
+Bad commit messages:
+```
+fixed a bug
+updated some stuff
+WIP
+```
+
+VIOLATIONS:
+- Missing issue references in PRs
+- Unformatted code
+- Missing tests
+- Non-conventional commit messages
+- Undocumented breaking changes
+- Unvetted dependencies 

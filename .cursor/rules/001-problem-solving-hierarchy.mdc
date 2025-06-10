@@ -1,0 +1,72 @@
+---
+description: ENFORCE problem-solving hierarchy WHEN debugging or implementing features TO prevent detail-traps and assumption errors
+globs: **/*
+---
+
+# Problem-Solving Hierarchy
+
+## Context
+- When debugging complex issues
+- When implementing new features
+- When making system-wide changes
+- When stuck in a debugging loop
+
+## Requirements
+
+### Hierarchy of Understanding
+1. First validate system-level assumptions:
+   - Confirm the overall architecture is correct
+   - Verify the data flow between major components
+   - Check that all components are properly connected
+
+2. Then validate component-level assumptions:
+   - Verify component interfaces match expectations
+   - Confirm component responsibilities are clear
+   - Check component interaction patterns
+
+3. Only then focus on implementation details:
+   - Individual function behavior
+   - Specific variable values
+   - Line-by-line debugging
+
+### Periodic Reset Requirements
+- Every 3 failed attempts at fixing an issue:
+  1. Stop and document current understanding
+  2. Re-validate all system-level assumptions
+  3. Consider if the problem might be at a higher level
+  4. Only continue with detail work if higher levels are confirmed correct
+
+### Documentation Requirements
+- Maintain a clear model of:
+  1. System-level data flow
+  2. Component interactions
+  3. Current assumptions being tested
+  4. Failed approaches and why they failed
+
+## Examples
+
+<example>
+// Good: Hierarchical debugging approach
+1. First confirm overall account flow in Solana program
+2. Then verify callback configuration structure
+3. Only then debug specific account ordering
+
+This prevents getting stuck in account-ordering details when the 
+overall callback structure might be incorrect.
+</example>
+
+<example type="invalid">
+// Bad: Immediate dive into details
+1. Start by fixing account index 4
+2. Try different account orderings
+3. Adjust individual permissions
+
+This can lead to endless cycles if the fundamental callback 
+structure is incorrect.
+</example>
+
+<critical>
+- NEVER spend more than 3 attempts at the same detail level without re-validating higher-level assumptions
+- ALWAYS maintain documentation of current system understanding
+- ALWAYS consider if the problem might be at a higher architectural level
+</critical> 

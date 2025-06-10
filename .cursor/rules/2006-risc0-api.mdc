@@ -1,0 +1,68 @@
+---
+description: USE when implementing RISC0 v1.2.1 zero-knowledge proofs to ensure correct API usage
+globs: src/**/*.rs
+---
+
+# RISC0 API Standards
+
+## Context
+- Applied when working with RISC0 v1.2.1 zero-knowledge proof system
+- Serves as the primary entry point for RISC0-related rules
+- References other RISC0 rules for specific implementation details
+
+## Requirements
+
+### Core API Usage
+- Follow version-specific patterns for RISC0 v1.2.1
+- Use correct type imports and module organization (see rule 2002-risc0-types)
+- Handle receipts and proofs properly (see rule 2003-risc0-receipts)
+- Implement guest programs correctly (see rule 2004-risc0-guest)
+- Emit required metrics (see rule 2005-risc0-metrics)
+
+### Version Compatibility
+- Use RISC0 v1.2.1 API patterns:
+  - Receipt types: `Receipt`, `InnerReceipt::Composite`, `InnerReceipt::Succinct`
+  - Proof handling: `ProofJson`, `Seal`, `ProofDigest`
+  - Guest program interface changes from pre-1.2.1
+  - Updated metrics and proof size tracking
+
+### Related Rules
+- 2002-risc0-types: Type imports and organization
+- 2003-risc0-receipts: Receipt and proof handling
+- 2004-risc0-guest: Guest program implementation
+- 2005-risc0-metrics: Metrics and monitoring
+
+## Examples
+
+<example>
+// Good: Basic RISC0 v1.2.1 setup with proper organization
+use risc0_zkvm::{
+    Receipt, InnerReceipt, sha::Digestible,
+    ExecutorEnv, ExecutorImpl, VerifierContext,
+};
+
+// See 2002-risc0-types for complete import examples
+// See 2003-risc0-receipts for receipt handling
+// See 2004-risc0-guest for guest program examples
+// See 2005-risc0-metrics for metrics emission
+</example>
+
+<example type="invalid">
+// Bad: Using pre-1.2.1 patterns
+use risc0_zkvm::Receipt;
+use bonsol_prover::proof::{ProofJson, Seal}; // Wrong location
+use risc0_zkvm::Digest; // Wrong import path
+
+// Missing proper organization and current patterns
+</example>
+
+## Critical Notes
+<critical>
+- Use `claim()` instead of `get_claim()` for accessing receipt claims
+- Use `seal_bytes()` instead of `get_seal()` for accessing receipt seals
+- Access `verifier_parameters` instead of `exit_code` in metadata
+- Handle both Succinct and Composite receipt variants correctly
+- Never use deprecated API methods from pre-1.2.1 versions
+- Implement proper error handling for all receipt operations
+- Test receipt handling with both Succinct and Composite variants
+</critical> 

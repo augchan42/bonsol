@@ -1,0 +1,105 @@
+---
+description: ENFORCE RISC0 type and import standards WHEN using RISC0 v1.2.1 types TO ensure correct dependency usage
+globs: src/**/*.rs
+---
+
+# RISC0 Type and Import Standards
+
+## Context
+- Applied when working with RISC0 proof-related types and modules
+- Focuses on correct import patterns for proof verification and seal data
+- Ensures consistent usage of RISC0 v1.2.1 types
+- See 2001-risc0-api for high-level RISC0 integration guidelines
+
+## Requirements
+- Import proof-related types from their correct crates and modules:
+  - Use `risc0_groth16::{ProofJson, Seal}` for proof verification types
+  - Use `risc0_zkp::core::digest::Digest as ProofDigest` for proof digests
+  - Use `risc0_zkvm::Receipt` for receipt handling
+  - Use `risc0_zkvm::sha::{Digest, Digestible}` when working with digests or MaybePruned types
+  - NEVER import `Digest` directly from `risc0_zkvm` root
+- Use correct module paths for digest types:
+  - Import zkVM digests from `risc0_zkvm::sha::Digest` ONLY when needed
+  - Import proof digests from `risc0_zkp::core::digest::Digest`
+  - Import guest digests from `risc0_zkvm::guest::sha` when needed
+  - Import `Digestible` trait when working with `MaybePruned` types
+- Use appropriate type aliases to avoid ambiguity:
+  - Alias `risc0_zkvm::sha::Digest as ReceiptDigest` ONLY when using both digest types
+  - Alias `risc0_zkp::core::digest::Digest as ProofDigest` when using proof digests
+  - Remove unused digest imports and aliases
+- Never import from incorrect locations:
+  - Avoid `bonsol_prover::proof::{ProofJson, Seal}`
+  - Avoid `risc0_zkvm::Digest` (use `risc0_zkvm::sha::Digest` instead)
+  - Avoid bare imports that could cause ambiguity
+  - Remove any unused imports to prevent warnings
+
+## Examples
+
+<example>
+// Good: Minimal required imports for proof handling with MaybePruned support
+use risc0_groth16::{ProofJson, Seal};
+use risc0_zkp::core::digest::Digest as ProofDigest;
+use risc0_zkvm::{Receipt, InnerReceipt, sha::Digestible};
+
+fn handle_proof(receipt: Receipt) -> Result<ProofDigest> {
+    let claim = receipt.claim()?;
+    let digest = claim.digest(); // Using Digestible trait on MaybePruned
+    // Implementation
+}
+</example>
+
+<example>
+// Good: Imports when both digest types are needed
+use risc0_zkp::core::digest::Digest as ProofDigest;
+use risc0_zkvm::sha::{Digest as ReceiptDigest, Digestible};
+
+fn process_proof(
+    receipt: Receipt,
+    proof_digest: ProofDigest,
+    receipt_digest: ReceiptDigest,
+) -> Result<()> {
+    let claim = receipt.claim()?;
+    let digest = claim.digest(); // Using Digestible trait
+    // Implementation using both digest types
+}
+</example>
+
+<example type="invalid">
+// Bad: Missing Digestible trait for MaybePruned
+use risc0_zkvm::Receipt;
+
+fn handle_receipt(receipt: Receipt) -> Result<()> {
+    let digest = receipt.claim()?.digest(); // Error: no method named 'digest' found for MaybePruned
+    // Implementation
+}
+</example>
+
+<example>
+// Good: Direct digest usage with proper imports
+use risc0_zkvm::sha::{Digest, Digestible};
+
+fn hash_data(data: &[u8]) -> Digest {
+    let mut digest = Digest::new();
+    digest.update(data);
+    digest
+}
+</example>
+
+<example type="invalid">
+// Bad: Ambiguous and incorrect imports
+use risc0_zkvm::Digest;  // Wrong: must import from sha module
+use risc0_zkp::core::digest::Digest;  // Conflicting import
+use risc0_zkvm::sha::Digest as ReceiptDigest;  // Unnecessary if not using both types
+
+fn process_data(data: Digest) {  // Ambiguous which Digest is used
+    // Implementation
+}
+</example>
+
+## Critical Notes
+<critical>
+- ALWAYS import Digestible trait when working with MaybePruned types
+- NEVER use bare Digest imports without proper module path
+- Use type aliases consistently to avoid ambiguity
+- Remove unused imports to prevent confusion
+</critical> 

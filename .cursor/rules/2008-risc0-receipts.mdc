@@ -1,0 +1,159 @@
+---
+description: ENFORCE RISC0 receipt handling standards WHEN working with proofs TO ensure correct API usage
+globs: src/**/*.rs
+---
+
+# RISC0 Receipt and Proof Handling
+
+## Context
+- Applied when working with RISC0 v1.2.1 receipt types
+- Focuses on correct method usage for different receipt variants
+- Ensures consistent access to seal bytes and other receipt data
+- Handles MaybePruned types correctly for claims and digests
+- See 2001-risc0-api for high-level RISC0 integration guidelines
+- See 2002-risc0-types for import standards
+
+## Requirements
+- Use correct methods for accessing receipt data:
+  - Use `get_seal_bytes()` ONLY on `SuccinctReceipt` types
+  - For `CompositeReceipt`, first convert to `SuccinctReceipt` using `prover.composite_to_succinct()`
+  - Use `receipt.claim()?.digest()` with `Digestible` trait imported for receipt digests
+  - Use `receipt.inner` to match on receipt variants
+  - Access `verifier_parameters` instead of `exit_code` in metadata
+- Handle receipt variants appropriately:
+  - Use pattern matching to handle both `Composite` and `Succinct` variants
+  - ALWAYS include catch-all pattern for non-exhaustive `InnerReceipt` enum
+  - Convert `CompositeReceipt` to `SuccinctReceipt` using `composite_to_succinct` before accessing seal bytes
+  - Access journal data through `receipt.journal.bytes`
+  - Handle unknown variants with appropriate error logging
+- Handle mutability correctly:
+  - Mark receipt variables as `mut` when using `std::mem::take()`
+  - Use `mut` when modifying receipt fields or taking ownership
+  - Ensure proper ownership transfer for journal data
+  - Handle mutable references correctly in async contexts
+- Handle journal data correctly:
+  - Validate journal structure before processing
+  - Check for expected section sizes (input digest: 32 bytes)
+  - Prevent duplicate data in journal outputs
+  - Use clear markers between journal sections
+  - Follow the standard journal format:
+    1. Input digest (32 bytes)
+    2. Structured output markers
+    3. Actual output data
+  - Verify total committed data size matches expected
+- Handle MaybePruned types correctly:
+  - Import `risc0_zkvm::sha::Digestible` trait when working with `MaybePruned<ReceiptClaim>`
+  - Use `claim.digest()` directly on `MaybePruned` types (don't use `as_value()`)
+  - Handle potential errors from `receipt.claim()?` appropriately
+- Follow RISC0 v1.2.1 receipt processing patterns:
+  - Use `InnerReceipt` enum for type checking
+  - Handle all receipt variants in match statements
+  - Log appropriate errors for unexpected variants
+  - Convert verifier parameters to exit codes correctly
+
+## Examples
+
+<example>
+// Good: Complete receipt handling with journal validation
+use risc0_zkvm::{Receipt, InnerReceipt, sha::Digestible};
+
+fn process_receipt(mut receipt: Receipt, prover: &Prover) -> Result<Vec<u8>> {
+    // Validate journal structure
+    let journal_bytes = &receipt.journal.bytes;
+    if journal_bytes.len() < 32 {
+        return Err(anyhow::anyhow!("Invalid journal size"));
+    }
+    
+    // Split journal into sections
+    let (input_digest, remaining) = journal_bytes.split_at(32);
+    
+    // Process remaining data ensuring no duplicates
+    let mut seen_markers = HashSet::new();
+    let mut current_pos = 0;
+    while current_pos < remaining.len() {
+        let marker = remaining[current_pos];
+        if !seen_markers.insert(marker) {
+            return Err(anyhow::anyhow!("Duplicate section marker"));
+        }
+        // Process section...
+    }
+    
+    // Handle receipt type
+    match &receipt.inner {
+        InnerReceipt::Composite(cr) => {
+            let sr = prover.composite_to_succinct(&cr)?;
+            let journal = std::mem::take(&mut receipt.journal);
+            Ok(sr.get_seal_bytes().to_vec())
+        }
+        InnerReceipt::Succinct(sr) => {
+            let journal = std::mem::take(&mut receipt.journal);
+            Ok(sr.get_seal_bytes().to_vec())
+        }
+        _ => {
+            error!("Unknown receipt type encountered");
+            emit_event!(MetricEvents::ProvingFailed,
+                error => "unknown_receipt_type"
+            );
+            Err(anyhow::anyhow!("Unknown receipt type"))
+        }
+    }
+}
+</example>
+
+<example>
+// Good: Structured journal output handling
+fn write_to_journal(env: &mut ExecutorEnv, data: &[u8], marker: u8) -> Result<()> {
+    // Write section marker
+    env.write(&[marker])?;
+    
+    // Write actual data
+    env.write(data)?;
+    
+    Ok(())
+}
+
+fn process_outputs(env: &mut ExecutorEnv, outputs: &[Vec<u8>]) -> Result<()> {
+    // Write input digest first
+    let input_hash = sha::digest(&inputs);
+    env.write(&input_hash)?;
+    
+    // Write each output section with unique markers
+    for (i, output) in outputs.iter().enumerate() {
+        write_to_journal(env, output, 0xA0 + i as u8)?;
+    }
+    
+    Ok(())
+}
+</example>
+
+<example type="invalid">
+// Bad: Missing journal validation
+fn process_receipt(mut receipt: Receipt) -> Result<Vec<u8>> {
+    // Directly using journal without validation
+    let journal = std::mem::take(&mut receipt.journal);
+    Ok(journal.bytes)
+}
+</example>
+
+<example type="invalid">
+// Bad: Duplicate output sections
+fn write_outputs(env: &mut ExecutorEnv, ascii_art: &str) -> Result<()> {
+    // Bad: Writing same data multiple times
+    env.write(ascii_art.as_bytes())?;
+    env.write(ascii_art.as_bytes())?; // Duplicate!
+    Ok(())
+}
+</example>
+
+## Critical Notes
+<critical>
+- ALWAYS mark receipt as mut when using std::mem::take()
+- ALWAYS include catch-all pattern for InnerReceipt enum
+- NEVER assume InnerReceipt is exhaustive
+- NEVER write duplicate data to journal
+- ALWAYS validate journal structure before processing
+- Use unique markers for different journal sections
+- Handle ownership transfer carefully
+- Use proper error handling for unknown variants
+- Emit appropriate metrics for failures
+</critical> 

@@ -1,0 +1,231 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# RISC0 VM Execution Patterns
+
+## Context
+- Applied when working with RISC0 VM execution and proof verification
+- Focuses on proper ownership handling, logging, and error management
+
+## Requirements
+
+### Incremental Development
+- Start with minimal working examples before adding complexity
+- Add features in small, compilable increments:
+  1. First establish basic structure with correct types and ownership
+  2. Then add core functionality without logging
+  3. Finally add detailed logging and error handling
+- Test compilation after each small change
+- When encountering ownership/borrowing errors:
+  1. Fix ownership issues first before adding more features
+  2. Validate changes compile before adding logging
+  3. Add logging last, after core logic works
+
+### Ownership and Borrowing
+- Prefer `iter()` over `into_iter()` when iteration doesn't require ownership transfer
+- Clone data explicitly when ownership is needed but original data must be preserved
+- Use references when passing MemoryImage and other large RISC0 structures
+
+### Logging Standards
+- Use hierarchical logging levels:
+  - `error!` for unrecoverable failures
+  - `info!` for high-level execution flow
+  - `trace!` for detailed debugging information
+- Include timing information for performance-critical operations
+- Log structured data with clear formatting:
+  ```rust
+  trace!(
+      "Operation details:\n\
+       - Type: {:?}\n\
+       - Size: {} bytes\n\
+       - Duration: {:?}",
+      op_type, size, duration
+  );
+  ```
+
+### Error Handling
+- Use `anyhow::Result` for public functions
+- Provide detailed error context in logs before returning errors
+- Include relevant metrics (timing, sizes, indices) in error messages
+
+### Memory Management
+- Set explicit memory limits for RISC0 VM execution
+- Configure segment sizes based on expected workload
+- Log memory-related configuration decisions
+
+## Examples
+
+<example>
+// Good: Incremental development of RISC0 VM executor
+// Step 1: Basic structure with correct types
+pub fn new_risc0_exec_env(
+    image: MemoryImage,
+    inputs: Vec<ProgramInput>,
+) -> Result<ExecutorImpl<'static>> {
+    let env_builder = ExecutorEnv::builder();
+    let env = env_builder.build()?;
+    ExecutorImpl::new(env, image)
+}
+
+// Step 2: Add core functionality
+pub fn new_risc0_exec_env(
+    image: MemoryImage,
+    inputs: Vec<ProgramInput>,
+) -> Result<ExecutorImpl<'static>> {
+    let mut env_builder = ExecutorEnv::builder();
+    env_builder.segment_limit_po2(24);
+    
+    for input in inputs.iter() {
+        if let ProgramInput::Resolved(ri) = input {
+            if ri.input_type == ProgramInputType::PublicProof {
+                let receipt: Receipt = bincode::deserialize(&ri.data)?;
+                env_builder.add_assumption(receipt);
+            } else {
+                env_builder.write_slice(&ri.data);
+            }
+        }
+    }
+    
+    let env = env_builder.build()?;
+    ExecutorImpl::new(env, image)
+}
+
+// Step 3: Add logging and metrics
+pub fn new_risc0_exec_env(
+    image: MemoryImage,
+    inputs: Vec<ProgramInput>,
+) -> Result<ExecutorImpl<'static>> {
+    let start_time = Instant::now();
+    info!("Creating new RISC0 executor environment");
+    
+    let mut env_builder = ExecutorEnv::builder();
+    env_builder.segment_limit_po2(24);
+    
+    let mut total_size = 0;
+    for (idx, input) in inputs.iter().enumerate() {
+        if let ProgramInput::Resolved(ri) = input {
+            total_size += ri.data.len();
+            trace!("Processing input {}/{}", idx + 1, inputs.len());
+            // ... rest of the implementation
+        }
+    }
+    
+    trace!("Total input size: {} bytes", total_size);
+    ExecutorImpl::new(env_builder.build()?, image)
+}
+</example>
+
+<example type="invalid">
+// Bad: Too much complexity at once
+pub fn new_risc0_exec_env(
+    image: MemoryImage,
+    inputs: Vec<ProgramInput>,
+) -> Result<ExecutorImpl<'static>> {
+    let start_time = Instant::now();
+    trace!("Starting executor setup with {} inputs", inputs.len());
+    
+    let mut env_builder = ExecutorEnv::builder()
+        .segment_limit_po2(24)
+        .session_limit(None);
+    
+    for (idx, input) in inputs.into_iter().enumerate() {  // Ownership error!
+        match input {
+            ProgramInput::Resolved(ri) => {
+                trace!("Processing input {} of {}", idx, inputs.len());  // Use after move!
+                if ri.input_type == ProgramInputType::PublicProof {
+                    let receipt = bincode::deserialize(&ri.data)?;
+                    trace!("Receipt: {:?}", receipt);  // May not implement Debug!
+                    env_builder.add_assumption(receipt);
+                }
+            }
+            _ => error!("Invalid input type at {}", idx),
+        }
+    }
+    
+    Ok(ExecutorImpl::new(env_builder.build()?, image)?)
+}
+</example>
+
+<example>
+// Good: Proper iteration and logging
+pub fn process_inputs(inputs: Vec<Input>) -> Result<()> {
+    let start_time = Instant::now();
+    
+    // Use iter() to preserve ownership
+    for (idx, input) in inputs.iter().enumerate() {
+        trace!(
+            "Processing input {}/{} - Details:\n\
+             - Type: {:?}\n\
+             - Size: {} bytes",
+            idx + 1,
+            inputs.len(),
+            input.type_info(),
+            input.size()
+        );
+        // Processing logic
+    }
+    
+    info!(
+        "Processing complete:\n\
+         - Total inputs: {}\n\
+         - Duration: {:?}",
+        inputs.len(),
+        start_time.elapsed()
+    );
+    Ok(())
+}
+</example>
+
+<example type="invalid">
+// Bad: Losing ownership and poor logging
+pub fn process_inputs(inputs: Vec<Input>) -> Result<()> {
+    // into_iter() consumes inputs
+    for input in inputs.into_iter() {
+        println!("Processing input"); // Poor logging
+        // Can't use inputs.len() anymore!
+    }
+    Ok(())
+}
+</example>
+
+<example>
+// Good: Error handling with context
+pub fn verify_proof(proof: &[u8]) -> Result<Receipt> {
+    let start_time = Instant::now();
+    
+    match bincode::deserialize(proof) {
+        Ok(receipt) => {
+            trace!(
+                "Proof verification successful:\n\
+                 - Size: {} bytes\n\
+                 - Duration: {:?}",
+                proof.len(),
+                start_time.elapsed()
+            );
+            Ok(receipt)
+        }
+        Err(e) => {
+            error!(
+                "Proof verification failed:\n\
+                 - Error: {}\n\
+                 - Size: {} bytes\n\
+                 - Duration: {:?}",
+                e,
+                proof.len(),
+                start_time.elapsed()
+            );
+            Err(anyhow::anyhow!("Proof verification failed: {}", e))
+        }
+    }
+}
+</example>
+
+<example type="invalid">
+// Bad: Poor error handling and logging
+pub fn verify_proof(proof: &[u8]) -> Result<Receipt> {
+    bincode::deserialize(proof)
+        .map_err(|e| anyhow::anyhow!(e))
+}
+</example> 

@@ -1,0 +1,154 @@
+---
+description: ENFORCE Bonsol interface standards WHEN handling protocol messages TO ensure correct serialization and version compatibility
+globs: src/**/*.rs
+---
+
+# Bonsol Interface Standards
+
+## Context
+- Applied when working with Bonsol protocol messages and types
+- Focuses on FlatBuffers serialization and version handling
+- Ensures consistent handling of protocol messages
+- Critical for cross-language compatibility
+- Particularly important for RISC0 v1.2.1 integration
+
+## Requirements
+
+### Version Handling
+- Use `ProverVersion` enum for version compatibility:
+  ```rust
+  match version {
+      ProverVersion::V1_2_1 { verifier_digest } => {
+          // Handle current version
+      }
+      ProverVersion::V1_0_1 { .. } => {
+          // Handle legacy version
+      }
+      ProverVersion::UnsupportedVersion => {
+          // Handle unsupported version
+      }
+  }
+  ```
+- Validate version compatibility early:
+  - Check prover version before processing requests
+  - Use `try_into()` for converting from FlatBuffers version
+  - Handle version mismatches with appropriate errors
+
+### FlatBuffers Message Handling
+- Use proper unpacking patterns:
+  ```rust
+  // Reading messages
+  let claim = root_as_claim_v1(buffer)?;
+  
+  // Accessing fields safely
+  if let Some(execution_id) = claim.execution_id() {
+      // Process execution_id
+  }
+  
+  // Unpacking to owned data when needed
+  let claim_t = claim.unpack();
+  ```
+- Validate required fields:
+  - Check for None values in optional fields
+  - Handle missing data appropriately
+  - Use early returns for validation
+
+### Protocol Messages
+- Handle core message types correctly:
+  - `ClaimV1`: Execution claims and commitments
+  - `DeployV1`: Program deployment data
+  - `ExecutionRequestV1`: Execution requests
+- Follow field access patterns:
+  - Use direct field access for required fields
+  - Check optional fields with if let
+  - Unpack data only when owned values needed
+
+## Examples
+
+<example>
+// Good: Complete message handling with validation
+fn process_execution_request(data: &[u8]) -> Result<()> {
+    // 1. Parse and validate message
+    let request = root_as_execution_request_v1(data)
+        .map_err(|_| Error::InvalidData)?;
+        
+    // 2. Validate version
+    let version: ProverVersion = request
+        .prover_version()
+        .try_into()
+        .map_err(|_| Error::InvalidVersion)?;
+        
+    if version != VERSION_V1_2_1 {
+        return Err(Error::VersionMismatch);
+    }
+    
+    // 3. Process required fields
+    let execution_id = request
+        .execution_id()
+        .ok_or(Error::MissingExecutionId)?;
+        
+    // 4. Handle optional fields safely
+    let callback = if let Some(program_id) = request.callback_program_id() {
+        Some(ProgramExec {
+            program_id: program_id.try_into()?,
+            instruction_prefix: request
+                .callback_instruction_prefix()
+                .map(|v| v.bytes().to_vec())
+                .unwrap_or_default(),
+        })
+    } else {
+        None
+    };
+    
+    Ok(())
+}
+</example>
+
+<example>
+// Good: Version handling with metrics
+fn validate_prover_version(version: ProverVersion) -> Result<()> {
+    match version {
+        ProverVersion::V1_2_1 { verifier_digest } 
+            if verifier_digest == DIGEST_V1_2_1_BYTES => {
+            emit_event!(MetricEvents::VersionValidation,
+                version => "1.2.1",
+                status => "success"
+            );
+            Ok(())
+        }
+        other => {
+            emit_event!(MetricEvents::VersionValidation,
+                version => format!("{:?}", other),
+                status => "failed"
+            );
+            Err(Error::InvalidVersion)
+        }
+    }
+}
+</example>
+
+<example type="invalid">
+// Bad: Unsafe field access
+fn process_claim_unsafe(data: &[u8]) -> Result<String> {
+    let claim = root_as_claim_v1(data)?;
+    Ok(claim.execution_id().to_string()) // Missing None check
+}
+</example>
+
+<example type="invalid">
+// Bad: Missing version validation
+fn handle_request(request: ExecutionRequestV1) {
+    // Directly processing without version check
+    process_execution(request);
+}
+</example>
+
+## Critical Notes
+<critical>
+- ALWAYS validate prover version before processing
+- NEVER assume optional fields are present
+- Handle FlatBuffers errors appropriately
+- Unpack only when owned data needed
+- Use proper error types for protocol errors
+- Include version checks in metrics
+</critical> 

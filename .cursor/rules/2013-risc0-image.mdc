@@ -1,0 +1,228 @@
+---
+description: ENFORCE RISC0 image handling standards WHEN loading and managing RISC-V programs TO ensure safe execution and memory efficiency
+globs: src/**/*.rs
+---
+
+# RISC0 Image Handling Standards
+
+## Context
+- Applied when working with RISC-V program images in RISC0
+- Focuses on safe loading and memory management
+- Ensures proper validation of ELF files
+- Critical for program execution safety
+- Manages memory constraints and compression
+
+## Requirements
+
+### Image Structure
+- Use proper image representation:
+  ```rust
+  pub struct Image {
+      pub id: String,           // Unique identifier
+      pub data: Option<Program>, // RISC-V program (optional for compression)
+      bytes: Option<Bytes>,     // Raw bytes (optional for compression)
+      pub size: u64,           // Size in bytes
+      pub path: PathBuf,       // File path
+      pub last_used: u64,      // Usage timestamp
+  }
+  ```
+
+### Image Loading
+- Implement safe ELF loading:
+  ```rust
+  fn load_elf(elf: &[u8]) -> Result<Program> {
+      // Validate ELF format and memory constraints
+      Program::load_elf(elf, GUEST_MAX_MEM as u32)?;
+      Ok(program)
+  }
+  ```
+- Validate memory constraints:
+  ```rust
+  const GUEST_MAX_MEM: usize = /* memory limit */;
+  const PAGE_SIZE: usize = /* page size */;
+  ```
+
+### Memory Management
+- Implement compression for memory efficiency:
+  ```rust
+  impl Image {
+      // Free memory
+      pub fn compress(&mut self) {
+          self.data = None;
+          self.bytes = None;
+      }
+      
+      // Load back into memory
+      pub async fn load(&mut self) -> Result<()> {
+          if self.data.is_some() {
+              return Ok(());
+          }
+          let data = read(&self.path).await?;
+          let program = Image::load_elf(&data)?;
+          self.data = Some(program);
+          self.bytes = Some(Bytes::from(data));
+          Ok(())
+      }
+  }
+  ```
+
+### Image Creation
+- Support multiple creation methods:
+  - From file path (async)
+  - From bytes (for downloads)
+  - With proper validation
+- Generate unique IDs:
+  - Based on memory image content
+  - Using cryptographic hashing
+
+## Examples
+
+<example>
+// Good: Complete image implementation with safety checks
+impl Image {
+    pub async fn new(path: PathBuf) -> Result<Image> {
+        // 1. Load and validate file
+        let data = read(&path).await?;
+        
+        // 2. Load and validate ELF
+        let program = Self::load_elf(&data)?;
+        
+        // 3. Create and validate memory image
+        let img = Self::mem_img(&program)?;
+        
+        // 4. Calculate size with overflow check
+        let size = img.pages.len()
+            .checked_mul(PAGE_SIZE as usize)
+            .ok_or_else(|| anyhow::anyhow!("Size overflow"))?;
+            
+        Ok(Image {
+            id: img.compute_id().to_string(),
+            bytes: Some(Bytes::from(data)),
+            data: Some(program),
+            size: size as u64,
+            path,
+            last_used: 0,
+        })
+    }
+    
+    pub fn get_memory_image(&self) -> Result<MemoryImage> {
+        // Validate program presence
+        let program = self.data
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No program data"))?;
+            
+        // Create memory image with validation
+        let image = Self::mem_img(program)?;
+        
+        Ok(image)
+    }
+}
+</example>
+
+<example>
+// Good: Memory-efficient image management
+pub struct ImageManager {
+    images: HashMap<String, Image>,
+    max_memory: usize,
+    current_memory: usize,
+}
+
+impl ImageManager {
+    pub async fn load_image(&mut self, id: &str) -> Result<&Image> {
+        let image = self.images.get_mut(id)
+            .ok_or_else(|| anyhow::anyhow!("Image not found"))?;
+            
+        // Check memory limits
+        if image.data.is_none() {
+            let required = image.size as usize;
+            if self.current_memory + required > self.max_memory {
+                // Compress least recently used images
+                self.free_memory(required)?;
+            }
+            
+            // Load image
+            image.load().await?;
+            self.current_memory += required;
+        }
+        
+        Ok(image)
+    }
+    
+    fn free_memory(&mut self, required: usize) -> Result<()> {
+        let mut freed = 0;
+        let mut to_compress = Vec::new();
+        
+        // Find least recently used images
+        for (_, image) in self.images.iter() {
+            if image.data.is_some() {
+                to_compress.push((image.last_used, image.id.clone()));
+            }
+        }
+        
+        // Sort by last used
+        to_compress.sort_by_key(|(ts, _)| *ts);
+        
+        // Compress until enough memory is freed
+        for (_, id) in to_compress {
+            if let Some(image) = self.images.get_mut(&id) {
+                freed += image.size as usize;
+                image.compress();
+                if freed >= required {
+                    break;
+                }
+            }
+        }
+        
+        if freed < required {
+            return Err(anyhow::anyhow!("Cannot free enough memory"));
+        }
+        
+        self.current_memory -= freed;
+        Ok(())
+    }
+}
+</example>
+
+<example type="invalid">
+// Bad: Unsafe image loading
+impl Image {
+    fn unsafe_load(data: &[u8]) -> Image {
+        let program = Program::load_elf(data, u32::MAX).unwrap(); // No validation
+        let img = MemoryImage::new(&program, 4096).unwrap(); // Hard-coded page size
+        
+        Image {
+            id: "unknown".to_string(), // Missing proper ID
+            bytes: Some(Bytes::from(data)),
+            data: Some(program),
+            size: data.len() as u64, // Wrong size calculation
+            path: PathBuf::new(),
+            last_used: 0,
+        }
+    }
+}
+</example>
+
+<example type="invalid">
+// Bad: Memory management
+impl Image {
+    fn load_unsafe(&mut self) {
+        if self.data.is_none() {
+            let data = std::fs::read(&self.path).unwrap(); // Blocking I/O
+            self.data = Some(Program::load_elf(&data, u32::MAX).unwrap());
+            self.bytes = Some(Bytes::from(data));
+        }
+    }
+}
+</example>
+
+## Critical Notes
+<critical>
+- ALWAYS validate ELF files before loading
+- NEVER exceed memory constraints
+- Use async I/O for file operations
+- Implement proper compression
+- Generate unique image IDs
+- Track memory usage
+- Handle all error cases
+- Validate page sizes and counts
+</critical> 

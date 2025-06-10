@@ -1,0 +1,124 @@
+---
+description: ENFORCE Rust code organization standards WHEN writing or modifying Rust code TO ensure maintainability and performance
+globs: src/**/*.rs
+---
+
+# Rust Code Organization Standards
+
+## Context
+- When writing or modifying Rust code
+- When handling ownership and borrowing
+- When organizing imports and modules
+- When managing variable scope and lifetime
+
+## Requirements
+
+### Import Organization
+- Group imports by source/crate
+- Order imports: std -> external -> internal
+- Use explicit imports for logging macros (error, warn, info, debug, trace)
+- Import required macros explicitly (msg!, emit_event!, etc.)
+- Avoid wildcard imports except in tests
+- Re-export commonly used types at module level
+- When adding new functionality, check and add all required imports first
+- Include all trait imports needed for methods being used
+
+### Variable Management
+- Clone data before async boundaries when needed
+- Create descriptive variable names for cloned data (e.g., `inputs_for_logging`)
+- Document reason for clones in comments
+- Scope clones to smallest possible block
+- Use references when possible to avoid unnecessary clones
+- Ensure variables are defined before use in all code paths
+- Initialize variables with appropriate default values when needed
+- Use type annotations when type inference is ambiguous
+
+### Type Handling
+- Check if type implements required traits before using methods
+- Provide alternative implementations for missing traits:
+  - Use `try_into()` instead of direct indexing
+  - Implement custom conversion when `to_vec()` is missing
+  - Use `as_ref()` or `as_slice()` for array access
+- Handle fixed-size arrays with proper type annotations
+- Use appropriate type conversions (try_into, from, into)
+- Document type requirements in function headers
+
+### Function Contracts
+- Document expected input types and formats
+- Specify ownership requirements (owned, borrowed, etc.)
+- Document any size/length requirements for inputs
+- Specify any trait bounds required for generic types
+- Document any side effects or state changes
+- Specify error conditions and handling
+- Document any assumptions about input data
+
+### Error Handling
+- Use thiserror for error type definitions
+- Implement std::error::Error for custom errors
+- Use anyhow for application-level error handling
+- Provide context with error chain (.context(), .with_context())
+- Create specific error variants for different failure modes
+- Handle all Result/Option unwrapping explicitly
+
+### Async Code
+- Document thread/async boundaries
+- Handle ownership across async boundaries explicitly
+- Use Arc for shared state in async contexts
+- Implement proper cleanup in drop handlers
+- Use tokio::spawn for CPU-intensive tasks
+
+## Examples
+
+<example>
+```rust
+use solana_program::{msg, hash::hashv};  // Explicit macro imports
+use std::{
+    convert::TryInto,
+    sync::Arc,
+};
+
+// Good type handling and function contract
+/// Process proof data with specific size requirements
+/// 
+/// # Arguments
+/// * `proof_data` - Byte array of exactly 256 bytes
+/// * `inputs` - Array of 32-byte arrays, must not be empty
+/// 
+/// # Returns
+/// Result containing processed proof or error if size requirements not met
+fn process_proof(
+    proof_data: &[u8],
+    inputs: &[[u8; 32]]
+) -> Result<Vec<u8>> {
+    // Validate sizes
+    if proof_data.len() != 256 {
+        return Err(Error::InvalidProofSize);
+    }
+    
+    // Handle fixed size arrays with try_into
+    let proof_a: [u8; 64] = proof_data[0..64]
+        .try_into()
+        .map_err(|_| Error::InvalidInput)?;
+        
+    // Use proper type conversion
+    let result = proof_a.to_vec();
+    
+    // Log with proper macro
+    msg!("Processed proof of size: {}", result.len());
+    Ok(result)
+}
+```
+Shows proper imports, type handling, and function documentation
+</example>
+
+<example type="invalid">
+```rust
+// Missing imports for used functionality
+fn process(data: &[u8]) -> Vec<u8> {
+    // Missing type annotation leads to inference error
+    let proof = data[0..64];  // Direct indexing without size check
+    proof.to_vec()  // Assumes type implements to_vec
+}
+```
+Shows missing imports and unsafe type assumptions
+</example> 

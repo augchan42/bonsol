@@ -1,0 +1,175 @@
+---
+description: ENFORCE Bonsol instruction handling standards WHEN processing Solana instructions TO ensure correct program execution
+globs: src/**/*.rs
+---
+
+# Bonsol Instruction Handling Standards
+
+## Context
+- Applied when working with Solana program instructions in Bonsol
+- Focuses on instruction conversion and handling
+- Ensures proper CPI (Cross-Program Invocation) handling
+- Critical for program execution tracking
+- Integrates with Solana account system
+
+## Requirements
+
+### Instruction Handling
+- Use proper instruction creation patterns:
+  ```rust
+  // Direct creation with full control
+  let ix = BonsolInstruction::new(
+      cpi,                // bool: is this a CPI?
+      accounts,           // Vec<Pubkey>
+      data,              // Vec<u8>
+      last_known_block,  // u64
+  );
+  
+  // Helper methods for common cases
+  let inner = BonsolInstruction::inner(accounts, data, block);  // CPI
+  let outer = BonsolInstruction::outer(accounts, data, block);  // Direct call
+  ```
+
+### Instruction Conversion
+- Implement `IntoBonsolInstruction` for instruction types:
+  ```rust
+  impl IntoBonsolInstruction for MyInstruction {
+      fn into_bonsol_ix(
+          self,
+          acc: &AccountKeys,
+          last_known_block: u64
+      ) -> BonsolInstruction {
+          // Convert accounts and data
+          let accounts = self.accounts
+              .into_iter()
+              .filter_map(|idx| acc.get(idx as usize).copied())
+              .collect();
+              
+          BonsolInstruction::new(
+              false,  // or check if CPI
+              accounts,
+              self.data,
+              last_known_block
+          )
+      }
+      
+      fn program_id_index(&self) -> u8 {
+          // Return program's account index
+          self.program_idx
+      }
+  }
+  ```
+
+### Program Execution
+- Handle program callbacks correctly:
+  ```rust
+  let program_exec = ProgramExec {
+      program_id,  // Target program's Pubkey
+      instruction_prefix: vec![/* prefix */],
+  };
+  ```
+- Track execution status:
+  - Use `CallbackStatus` enum
+  - Handle both success and failure cases
+  - Maintain execution context
+
+### Account Management
+- Validate account presence and permissions
+- Handle account key conversion safely
+- Track account ownership changes
+- Maintain proper account ordering
+
+## Examples
+
+<example>
+// Good: Complete instruction handling
+fn process_instruction(
+    ix: &CompiledInstruction,
+    keys: &AccountKeys,
+    last_block: u64,
+) -> Result<BonsolInstruction> {
+    // 1. Validate program ID
+    let program_idx = ix.program_id_index as usize;
+    let program_id = keys.get(program_idx)
+        .ok_or(Error::InvalidProgram)?;
+    
+    // 2. Convert instruction with validation
+    let bonsol_ix = ix.clone().into_bonsol_ix(keys, last_block);
+    
+    // 3. Validate account permissions
+    for (i, acc) in bonsol_ix.accounts.iter().enumerate() {
+        if !validate_account_permissions(acc, ix.accounts[i]) {
+            return Err(Error::InvalidPermissions);
+        }
+    }
+    
+    // 4. Set up program execution if needed
+    let program_exec = if needs_callback(&bonsol_ix) {
+        Some(ProgramExec {
+            program_id: *program_id,
+            instruction_prefix: vec![0x1],  // Default prefix
+        })
+    } else {
+        None
+    };
+    
+    Ok(bonsol_ix)
+}
+</example>
+
+<example>
+// Good: Filtering instructions with context
+fn filter_program_instructions<'a>(
+    instructions: Vec<CompiledInstruction>,
+    keys: &'a AccountKeys,
+    program_id: &'a Pubkey,
+    last_block: u64,
+) -> impl Iterator<Item = BonsolInstruction> + 'a {
+    filter_bonsol_instructions(
+        instructions,
+        keys,
+        program_id,
+        last_block,
+        |acc, prog, idx| {
+            // Validate program ownership
+            if let Some(owner) = acc.get(idx) {
+                owner == prog
+            } else {
+                false
+            }
+        }
+    )
+}
+</example>
+
+<example type="invalid">
+// Bad: Unsafe account access
+fn process_unsafe(ix: CompiledInstruction, keys: &AccountKeys) {
+    let program = keys[ix.program_id_index as usize]; // Can panic
+    let accounts = ix.accounts
+        .iter()
+        .map(|&idx| keys[idx as usize]) // Can panic
+        .collect();
+}
+</example>
+
+<example type="invalid">
+// Bad: Missing validation
+fn create_program_exec(id: Pubkey) -> ProgramExec {
+    ProgramExec {
+        program_id: id,
+        instruction_prefix: vec![],  // Missing required prefix
+    }
+}
+</example>
+
+## Critical Notes
+<critical>
+- ALWAYS validate account indices before access
+- NEVER assume account presence without checks
+- Validate program IDs before execution
+- Handle CPI context correctly
+- Track all account permissions
+- Maintain instruction ordering
+- Include block height in context
+</critical> 
